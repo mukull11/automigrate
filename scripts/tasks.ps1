@@ -20,6 +20,6 @@ switch ($Task) {
         python -m automigrate eval --llm mock
     }
     "ui" {
-        python -m streamlit run src/automigrate/app/ui.py
+        python -m streamlit run app/ui.py
     }
 }
