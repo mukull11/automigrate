@@ -1,10 +1,16 @@
-"""OpenAI adapter."""
+"""OpenAI-compatible adapter."""
 
 from __future__ import annotations
 
 import os
+from typing import Any
 
-from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
+from automigrate.llm.base import (
+    LLMAdapter,
+    LLMConfigurationError,
+    LLMError,
+    resolve_model,
+)
 
 DEFAULT_MODEL = "gpt-4o-mini"
 
@@ -12,18 +18,30 @@ DEFAULT_MODEL = "gpt-4o-mini"
 class OpenAILLM(LLMAdapter):
     name = "openai"
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self,
+        model: str | None = None,
+        *,
+        client: Any | None = None,
+    ) -> None:
         api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
+        if client is None and not api_key:
             raise LLMConfigurationError("OPENAI_API_KEY is not set")
+        self.model = resolve_model(DEFAULT_MODEL, "AUTOMIGRATE_OPENAI_MODEL", model)
+        if client is not None:
+            self._client = client
+            return
         try:
             from openai import OpenAI
         except ImportError as exc:
             raise LLMConfigurationError(
                 "The openai package is not installed; install automigrate[openai]"
             ) from exc
-        self.model = model or os.environ.get("AUTOMIGRATE_OPENAI_MODEL", DEFAULT_MODEL)
-        self._client = OpenAI(api_key=api_key)
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        options: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            options["base_url"] = base_url
+        self._client = OpenAI(**options)
 
     def complete(
         self,

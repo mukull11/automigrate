@@ -99,6 +99,7 @@ Exit codes: `0` = SUCCESSFUL, `2` = any flagged status, `1` = error.
 
 - [`docs/architecture.md`](docs/architecture.md)
 - [`docs/evaluation.md`](docs/evaluation.md)
+- [`docs/real_llm.md`](docs/real_llm.md)
 
 ## License
 

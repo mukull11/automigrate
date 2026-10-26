@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 
 
@@ -11,6 +12,25 @@ class LLMError(RuntimeError):
 
 class LLMConfigurationError(LLMError):
     pass
+
+
+def resolve_model(
+    default: str,
+    provider_env: str,
+    explicit: str | None = None,
+) -> str:
+    """Resolve a model name from explicit input, env vars, then the default.
+
+    ``AUTOMIGRATE_MODEL`` is a provider-agnostic override, so a Google AI Studio
+    model can be selected for the OpenAI-compatible endpoint without code changes.
+    """
+
+    return (
+        explicit
+        or os.environ.get("AUTOMIGRATE_MODEL")
+        or os.environ.get(provider_env)
+        or default
+    )
 
 
 class LLMAdapter(ABC):

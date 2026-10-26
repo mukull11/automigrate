@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import os
 
-from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
+from automigrate.llm.base import (
+    LLMAdapter,
+    LLMConfigurationError,
+    LLMError,
+    resolve_model,
+)
 
 DEFAULT_MODEL = "claude-3-5-sonnet-latest"
 
@@ -22,7 +27,9 @@ class AnthropicLLM(LLMAdapter):
             raise LLMConfigurationError(
                 "The anthropic package is not installed; install automigrate[anthropic]"
             ) from exc
-        self.model = model or os.environ.get("AUTOMIGRATE_ANTHROPIC_MODEL", DEFAULT_MODEL)
+        self.model = resolve_model(
+            DEFAULT_MODEL, "AUTOMIGRATE_ANTHROPIC_MODEL", model
+        )
         self._client = Anthropic(api_key=api_key)
 
     def complete(
