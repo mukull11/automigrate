@@ -24,6 +24,8 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.5",
 ]
+anthropic = ["anthropic>=0.34"]
+openai = ["openai>=1.30"]
 
 [project.scripts]
 automigrate = "automigrate.cli:app"

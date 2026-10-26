@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from abc import ABC, abstractmethod
 
 
-@runtime_checkable
-class LLMResponse(Protocol):
-    text: str
+class LLMError(RuntimeError):
+    pass
 
 
-@runtime_checkable
-class LLMAdapter(Protocol):
+class LLMConfigurationError(LLMError):
+    pass
+
+
+class LLMAdapter(ABC):
     """Minimal adapter contract used by the agents."""
 
     name: str
 
-    def complete(self, prompt: str, *, system: str | None = None) -> str:
+    @abstractmethod
+    def complete(
+        self,
+        prompt: str,
+        *,
+        system: str | None = None,
+        stage: str | None = None,
+        iteration: int = 0,
+    ) -> str:
         """Return the model's raw text response for a prompt."""
-        ...
