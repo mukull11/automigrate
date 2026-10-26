@@ -1,0 +1,80 @@
+[33mcommit 0441ce3194e8c3a9f612a55e98dc6261c3c1d3a8[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mbuild/phase-g-wip[m[33m, [m[1;31morigin/build/phase-g-wip[m[33m)[m
+Author: mukull11 <mmathur1911@gmail.com>
+Date:   Mon Oct 26 22:29:54 2026 +0530
+
+    wip: phase G benchmarks, evaluation, and fixes (unverified)
+
+ benchmarks/cases/01_rename/case.yaml               |   6 [32m+[m
+ benchmarks/cases/01_rename/docs/guide.md           |   3 [32m+[m
+ .../01_rename/fake_lib/new_version/lib/__init__.py |   2 [32m+[m
+ .../01_rename/fake_lib/old_version/lib/__init__.py |   2 [32m+[m
+ benchmarks/cases/01_rename/patch.txt               |  14 [32m+[m
+ benchmarks/cases/01_rename/plan.json               |  14 [32m+[m
+ benchmarks/cases/01_rename/repo/conftest.py        |   4 [32m+[m
+ benchmarks/cases/01_rename/repo/lib/__init__.py    |   2 [32m+[m
+ benchmarks/cases/01_rename/repo/requirements.txt   |   1 [32m+[m
+ benchmarks/cases/01_rename/repo/src/__init__.py    |   0
+ benchmarks/cases/01_rename/repo/src/app.py         |   5 [32m+[m
+ benchmarks/cases/01_rename/repo/tests/test_app.py  |   5 [32m+[m
+ benchmarks/cases/02_param_removed/case.yaml        |   6 [32m+[m
+ benchmarks/cases/02_param_removed/docs/guide.md    |   4 [32m+[m
+ .../fake_lib/new_version/lib/__init__.py           |   2 [32m+[m
+ .../fake_lib/old_version/lib/__init__.py           |   2 [32m+[m
+ benchmarks/cases/02_param_removed/patch.txt        |   8 [32m+[m
+ benchmarks/cases/02_param_removed/plan.json        |  14 [32m+[m
+ benchmarks/cases/02_param_removed/repo/conftest.py |   4 [32m+[m
+ .../cases/02_param_removed/repo/lib/__init__.py    |   2 [32m+[m
+ .../cases/02_param_removed/repo/requirements.txt   |   1 [32m+[m
+ .../cases/02_param_removed/repo/src/__init__.py    |   0
+ benchmarks/cases/02_param_removed/repo/src/app.py  |   5 [32m+[m
+ .../cases/02_param_removed/repo/tests/test_app.py  |   5 [32m+[m
+ benchmarks/cases/03_import_path/case.yaml          |   6 [32m+[m
+ benchmarks/cases/03_import_path/docs/guide.md      |   4 [32m+[m
+ .../fake_lib/new_version/lib/__init__.py           |   0
+ .../fake_lib/new_version/lib/core/__init__.py      |   0
+ .../fake_lib/new_version/lib/core/helpers.py       |   2 [32m+[m
+ .../fake_lib/old_version/lib/__init__.py           |   0
+ .../fake_lib/old_version/lib/utils.py              |   2 [32m+[m
+ benchmarks/cases/03_import_path/patch.txt          |   6 [32m+[m
+ benchmarks/cases/03_import_path/plan.json          |  14 [32m+[m
+ benchmarks/cases/03_import_path/repo/conftest.py   |   4 [32m+[m
+ .../cases/03_import_path/repo/lib/__init__.py      |   0
+ .../cases/03_import_path/repo/lib/core/__init__.py |   0
+ .../cases/03_import_path/repo/lib/core/helpers.py  |   2 [32m+[m
+ .../cases/03_import_path/repo/requirements.txt     |   1 [32m+[m
+ .../cases/03_import_path/repo/src/__init__.py      |   0
+ benchmarks/cases/03_import_path/repo/src/app.py    |   5 [32m+[m
+ .../cases/03_import_path/repo/tests/test_app.py    |   5 [32m+[m
+ benchmarks/cases/04_behavior_change/case.yaml      |   6 [32m+[m
+ benchmarks/cases/04_behavior_change/docs/guide.md  |   4 [32m+[m
+ .../fake_lib/new_version/lib/__init__.py           |   2 [32m+[m
+ .../fake_lib/old_version/lib/__init__.py           |   2 [32m+[m
+ benchmarks/cases/04_behavior_change/patch.txt      |   8 [32m+[m
+ benchmarks/cases/04_behavior_change/plan.json      |  14 [32m+[m
+ .../cases/04_behavior_change/repo/conftest.py      |   4 [32m+[m
+ .../cases/04_behavior_change/repo/lib/__init__.py  |   2 [32m+[m
+ .../cases/04_behavior_change/repo/requirements.txt |   1 [32m+[m
+ .../cases/04_behavior_change/repo/src/__init__.py  |   0
+ .../cases/04_behavior_change/repo/src/app.py       |   5 [32m+[m
+ .../04_behavior_change/repo/tests/test_app.py      |   5 [32m+[m
+ benchmarks/cases/05_unrelated_failure/case.yaml    |   6 [32m+[m
+ .../cases/05_unrelated_failure/docs/guide.md       |   3 [32m+[m
+ .../fake_lib/new_version/lib/__init__.py           |   2 [32m+[m
+ .../fake_lib/old_version/lib/__init__.py           |   2 [32m+[m
+ benchmarks/cases/05_unrelated_failure/patch.txt    |  14 [32m+[m
+ benchmarks/cases/05_unrelated_failure/plan.json    |  14 [32m+[m
+ .../cases/05_unrelated_failure/repo/conftest.py    |   4 [32m+[m
+ .../05_unrelated_failure/repo/lib/__init__.py      |   6 [32m+[m
+ .../05_unrelated_failure/repo/requirements.txt     |   1 [32m+[m
+ .../05_unrelated_failure/repo/src/__init__.py      |   0
+ .../cases/05_unrelated_failure/repo/src/app.py     |   5 [32m+[m
+ .../05_unrelated_failure/repo/tests/test_app.py    |   5 [32m+[m
+ .../repo/tests/test_preexisting.py                 |   2 [32m+[m
+ benchmarks/run_eval.py                             |  31 [32m+++[m
+ src/automigrate/cli.py                             |  18 [32m+[m[31m-[m
+ src/automigrate/evaluation.py                      | 304 [32m+++++++++++++++++++++[m
+ src/automigrate/rag/retriever.py                   |   4 [32m+[m[31m-[m
+ src/automigrate/tools/test_runner.py               |  35 [32m++[m[31m-[m
+ tests/test_benchmarks.py                           |  69 [32m+++++[m
+ tests/test_tools.py                                |  10 [32m+[m
+ 73 files changed, 739 insertions(+), 11 deletions(-)
