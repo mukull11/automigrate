@@ -194,6 +194,10 @@ def run_case(case: CaseDefinition, llm: str = "mock") -> CaseResult:
     fixed_ok = fixed >= case.expected_min_tests_fixed
     unresolved = state.latest.failed + state.latest.errors
     honest_outcome = case.expected_status == "SUCCESSFUL" or unresolved > 0
+    clean_flag = (
+        case.expected_status not in {"REQUIRES_HUMAN_REVIEW", "FAILED"}
+        or files_modified == 0
+    )
     passed = (
         status_ok
         and diagnosis_ok
@@ -201,6 +205,7 @@ def run_case(case: CaseDefinition, llm: str = "mock") -> CaseResult:
         and tests_unchanged
         and repo_unchanged
         and honest_outcome
+        and clean_flag
     )
     return CaseResult(
         case=case,
