@@ -8,9 +8,11 @@ import typer
 
 from automigrate import __version__, db
 from automigrate.config import Settings, get_settings
+from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
 from automigrate.rag.index import index_documents
+from automigrate.state import Status
 
 app = typer.Typer(
     name="automigrate",
@@ -114,7 +116,38 @@ def migrate(
     out: Path | None = typer.Option(None, "--out", help="Output directory."),
 ) -> None:
     """Run a migration from the source version to the target version."""
-    _pending("migrate")
+    settings = settings_from_cli(max_iterations=max_iterations, out=out, llm=llm)
+    try:
+        result = run_migration(
+            repo,
+            dependency,
+            from_version,
+            to_version,
+            docs_dir=docs or settings.docs_dir,
+            llm=settings.llm_provider,
+            max_iterations=settings.max_iterations,
+            outputs_dir=settings.outputs_dir,
+            db_path=settings.db_path,
+            top_k=settings.top_k,
+            score_threshold=settings.score_threshold,
+            subprocess_timeout=settings.subprocess_timeout,
+        )
+    except Exception as exc:
+        typer.echo(f"migration failed to start: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    state = result.state
+    typer.echo(f"Session: {result.session_id}")
+    typer.echo(f"Status: {state.status.value}")
+    typer.echo(
+        f"Tests: baseline {state.baseline.passed} passed / "
+        f"{state.baseline.failed} failed -> latest {state.latest.passed} passed / "
+        f"{state.latest.failed} failed"
+    )
+    typer.echo(f"Workspace: {result.workspace_path}")
+    if state.flag_reason:
+        typer.echo(f"Reason: {state.flag_reason}")
+    raise typer.Exit(code=0 if state.status == Status.SUCCESSFUL else 2)
 
 
 @app.command()

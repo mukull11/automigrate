@@ -32,7 +32,8 @@ def find_python_files(root: str | Path) -> list[Path]:
     root_path = Path(root)
     files: list[Path] = []
     for path in root_path.rglob("*.py"):
-        if any(part in SKIP_DIRS or part.startswith(".") for part in path.parts):
+        relative_parts = path.relative_to(root_path).parts
+        if any(part in SKIP_DIRS or part.startswith(".") for part in relative_parts):
             continue
         if path.is_file():
             files.append(path)

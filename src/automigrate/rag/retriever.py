@@ -89,9 +89,14 @@ def build_query(
     terms: list[str] = [dependency, from_version, to_version, *symbols]
     if iteration >= 2 and latest_traceback:
         terms.append(latest_traceback[:300])
+    expanded: list[str] = []
+    for term in terms:
+        expanded.append(term)
+        if "." in term:
+            expanded.append(term.rsplit(".", 1)[-1])
     seen: set[str] = set()
     ordered: list[str] = []
-    for term in terms:
+    for term in expanded:
         cleaned = term.strip()
         if cleaned and cleaned not in seen:
             seen.add(cleaned)

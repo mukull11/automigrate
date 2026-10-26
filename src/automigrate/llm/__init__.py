@@ -8,6 +8,7 @@ from automigrate.llm.anthropic import AnthropicLLM
 from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
 from automigrate.llm.mock import MockLLM
 from automigrate.llm.openai import OpenAILLM
+from automigrate.llm.recording import RecordingLLM
 
 
 def create_adapter(
@@ -32,5 +33,6 @@ __all__ = [
     "LLMError",
     "MockLLM",
     "OpenAILLM",
+    "RecordingLLM",
     "create_adapter",
 ]
