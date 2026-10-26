@@ -94,6 +94,11 @@ def prepare_workspace(source: str | Path, destination: str | Path) -> GitRepo:
     shutil.copytree(source_path, destination_path, ignore=IGNORE_PATTERNS, symlinks=False)
     repo = GitRepo(destination_path)
     repo.init()
+    exclude = destination_path / ".git" / "info" / "exclude"
+    exclude.write_text(
+        "__pycache__/\n*.pyc\n*.pyo\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/\n",
+        encoding="utf-8",
+    )
     repo.add_all()
     repo.commit("automigrate: baseline")
     return repo
