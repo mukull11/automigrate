@@ -95,6 +95,7 @@ class MigrationGraph:
         self._done = False
         self._files: list[Path] = []
         self._scan: ScanResult | None = None
+        self.baseline_sha: str | None = None
 
     def _record(self, stage: str, summary: str, action_type: str = "transition") -> None:
         assert self.state is not None
@@ -140,6 +141,12 @@ class MigrationGraph:
 
     def _finish(self, final_status: Status, reason: str | None = None) -> None:
         assert self.state is not None
+        if (
+            final_status in {Status.REQUIRES_HUMAN_REVIEW, Status.FAILED}
+            and self.repo is not None
+            and self.baseline_sha is not None
+        ):
+            self.repo.reset_hard(self.baseline_sha)
         self.state.status = final_status
         self.state.flag_reason = reason
         self._record(
@@ -186,6 +193,7 @@ class MigrationGraph:
         if self.workspace.exists() and any(self.workspace.iterdir()):
             raise FileExistsError(f"workspace is not empty: {self.workspace}")
         self.repo = prepare_workspace(self.repo_path, self.workspace)
+        self.baseline_sha = self.repo.head_sha()
         self.sandbox = Sandbox(self.workspace)
 
         case_dir = self.repo_path.parent
