@@ -376,6 +376,25 @@ def get_doc_chunk(conn: sqlite3.Connection, chunk_id: str) -> dict[str, Any] | N
     return dict(row) if row else None
 
 
+def list_doc_chunks_by_source(
+    conn: sqlite3.Connection, source_doc: str
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        "SELECT * FROM doc_chunk WHERE source_doc = ?", (source_doc,)
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def delete_doc_chunks_by_source(conn: sqlite3.Connection, source_doc: str) -> None:
+    conn.execute("DELETE FROM doc_chunk WHERE source_doc = ?", (source_doc,))
+    conn.commit()
+
+
+def list_indexed_sources(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute("SELECT DISTINCT source_doc FROM doc_chunk").fetchall()
+    return sorted(row["source_doc"] for row in rows)
+
+
 def save_report(
     conn: sqlite3.Connection,
     session_id: str,

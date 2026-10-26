@@ -42,3 +42,23 @@ def test_scan_unknown_dependency_exits_two(tmp_path) -> None:
     (repo / "requirements.txt").write_text("lib==1.0\n", encoding="utf-8")
     result = runner.invoke(app, ["scan", str(repo), "--dependency", "other"])
     assert result.exit_code == 2
+
+
+def test_index_docs_command(tmp_path) -> None:
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "guide.md").write_text("# Guide\n\nold_api is new_api.\n", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "index-docs",
+            "--docs",
+            str(docs),
+            "--dependency",
+            "lib",
+            "--db",
+            str(tmp_path / "index.db"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "wrote 1 chunk" in result.stdout

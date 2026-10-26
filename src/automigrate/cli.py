@@ -6,10 +6,11 @@ from pathlib import Path
 
 import typer
 
-from automigrate import __version__
+from automigrate import __version__, db
 from automigrate.config import Settings, get_settings
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
+from automigrate.rag.index import index_documents
 
 app = typer.Typer(
     name="automigrate",
@@ -80,9 +81,23 @@ def scan(
 def index_docs(
     docs: Path = typer.Option(..., "--docs", exists=True, help="Documentation directory."),
     dependency: str = typer.Option(..., "--dependency", help="Dependency name."),
+    version_hint: str | None = typer.Option(
+        None, "--version-hint", help="Migration version hint for indexed chunks."
+    ),
+    db_path: Path | None = typer.Option(None, "--db", help="SQLite database path."),
 ) -> None:
     """Chunk and index migration documentation."""
-    _pending("index-docs")
+    settings = get_settings(**({"db_path": db_path} if db_path else {}))
+    conn = db.init_db(settings.db_path)
+    try:
+        stats = index_documents(conn, docs, dependency, version_hint)
+    finally:
+        conn.close()
+    typer.echo(
+        f"Indexed {stats.files_indexed} file(s), skipped {stats.files_skipped} "
+        f"unchanged file(s), wrote {stats.chunks_written} chunk(s) "
+        f"for {dependency}."
+    )
 
 
 @app.command()
