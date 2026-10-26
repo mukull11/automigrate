@@ -1,0 +1,8 @@
+FILE: src/app.py
+<<<<<<< SEARCH
+def get_items():
+    return load()
+=======
+def get_items():
+    return load_legacy()
+>>>>>>> REPLACE

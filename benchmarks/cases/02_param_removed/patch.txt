@@ -1,0 +1,8 @@
+FILE: src/app.py
+<<<<<<< SEARCH
+def make_connection(host="db"):
+    return connect(host, mode="strict")
+=======
+def make_connection(host="db"):
+    return connect(host)
+>>>>>>> REPLACE

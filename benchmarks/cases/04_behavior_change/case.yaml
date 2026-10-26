@@ -1,0 +1,6 @@
+dependency: lib
+from_version: "1.0.0"
+to_version: "2.0.0"
+expected_status: REQUIRES_HUMAN_REVIEW
+expected_diagnosis: INSUFFICIENT_EVIDENCE
+expected_min_tests_fixed: 0

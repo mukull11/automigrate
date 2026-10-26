@@ -150,6 +150,16 @@ def test_workspace_git_flow_leaves_source_untouched(tmp_path) -> None:
     assert tree_checksum(source) == before
 
 
+def test_pytest_runner_counts_collection_errors(tmp_path) -> None:
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_broken.py").write_text(
+        "import module_that_does_not_exist\n", encoding="utf-8"
+    )
+    result = PytestRunner(SubprocessRunner(tmp_path)).run(["tests"])
+    assert result.errors == 1
+    assert result.first_traceback
+
+
 def test_git_repo_rejects_failed_command(tmp_path) -> None:
     repo = GitRepo(tmp_path)
     with pytest.raises(GitError):

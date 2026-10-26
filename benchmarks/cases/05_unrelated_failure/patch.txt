@@ -1,0 +1,14 @@
+FILE: src/app.py
+<<<<<<< SEARCH
+from lib import old_api
+
+
+def call_api():
+    return old_api()
+=======
+from lib import new_api
+
+
+def call_api():
+    return new_api()
+>>>>>>> REPLACE

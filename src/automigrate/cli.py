@@ -8,6 +8,7 @@ import typer
 
 from automigrate import __version__, db
 from automigrate.config import Settings, get_settings
+from automigrate.evaluation import run_evaluation
 from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
@@ -164,7 +165,22 @@ def evaluate(
     ),
 ) -> None:
     """Run the benchmark suite."""
-    _pending("eval")
+    results, metrics = run_evaluation(cases, llm=llm)
+    typer.echo(
+        f"Cases passed: {metrics['cases_passed']}/{metrics['cases']} | "
+        f"success rate {metrics['migration_success_rate']:.0%} | "
+        f"avg iterations {metrics['average_iterations']:.2f} | "
+        f"time {metrics['execution_time_s']:.2f}s"
+    )
+    for item in results:
+        marker = "PASS" if item.passed else "FAIL"
+        typer.echo(
+            f"  [{marker}] {item.case.name}: {item.actual_status}"
+            + (f" ({item.actual_diagnosis})" if item.actual_diagnosis else "")
+            + (f" - {item.flag_reason}" if item.flag_reason else "")
+        )
+    if any(not item.passed for item in results):
+        raise typer.Exit(code=1)
 
 
 def settings_from_cli(

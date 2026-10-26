@@ -93,7 +93,9 @@ def build_query(
     for term in terms:
         expanded.append(term)
         if "." in term:
-            expanded.append(term.rsplit(".", 1)[-1])
+            parts = term.split(".")
+            expanded.extend(".".join(parts[:index]) for index in range(2, len(parts) + 1))
+            expanded.append(parts[-1])
     seen: set[str] = set()
     ordered: list[str] = []
     for term in expanded:

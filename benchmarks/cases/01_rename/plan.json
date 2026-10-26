@@ -1,0 +1,14 @@
+{
+  "summary": "rename old_api to new_api",
+  "changes": [
+    {
+      "file": "src/app.py",
+      "old_symbol": "old_api",
+      "new_symbol": "new_api",
+      "description": "rename old_api to new_api",
+      "confidence": 0.95,
+      "cites": ["a7acd82cbdf33c8a9e18735c13f697d91f8c9cea"]
+    }
+  ],
+  "expected_effect": "call_api returns the new value and the test passes"
+}

@@ -10,10 +10,22 @@ from automigrate.state import TestRunResult
 from automigrate.tools.subprocess import SubprocessRunner
 
 
+def _failed_items(report: dict) -> list[dict]:
+    items = [
+        item
+        for item in report.get("tests", [])
+        if item.get("outcome") in {"failed", "error"}
+    ]
+    items.extend(
+        item
+        for item in report.get("collectors", [])
+        if item.get("outcome") in {"failed", "error"}
+    )
+    return items
+
+
 def _first_traceback(report: dict) -> str | None:
-    for test in report.get("tests", []):
-        if test.get("outcome") not in {"failed", "error"}:
-            continue
+    for test in _failed_items(report):
         for phase in ("call", "setup", "teardown"):
             phase_data = test.get(phase)
             if not isinstance(phase_data, dict):
@@ -35,17 +47,22 @@ def parse_pytest_report(
     ruff_issue_count: int = 0,
 ) -> TestRunResult:
     summary = report.get("summary", {})
-    tests = report.get("tests", [])
+    failed_items = _failed_items(report)
+    collector_errors = [
+        item
+        for item in report.get("collectors", [])
+        if item.get("outcome") in {"failed", "error"}
+    ]
     failed_names = [
-        str(test.get("nodeid", ""))
-        for test in tests
-        if test.get("outcome") in {"failed", "error"}
+        str(item.get("nodeid", "")) for item in failed_items if item.get("nodeid")
     ]
     return TestRunResult(
         passed=int(summary.get("passed", 0)),
         failed=int(summary.get("failed", 0)),
-        errors=int(summary.get("error", 0)),
-        failed_test_names=[name for name in failed_names if name],
+        errors=int(summary.get("error", 0))
+        + int(summary.get("errors", 0))
+        + len(collector_errors),
+        failed_test_names=failed_names,
         first_traceback=_first_traceback(report),
         ruff_issue_count=ruff_issue_count,
         duration_s=float(report.get("duration", duration_s) or duration_s),
