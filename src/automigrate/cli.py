@@ -8,6 +8,8 @@ import typer
 
 from automigrate import __version__
 from automigrate.config import Settings, get_settings
+from automigrate.ingest.dependencies import normalize_name
+from automigrate.ingest.scanner import ScanResult, scan_repository
 
 app = typer.Typer(
     name="automigrate",
@@ -32,10 +34,46 @@ def main(
         raise typer.Exit(code=0)
 
 
+def _print_scan(result: ScanResult) -> None:
+    typer.echo(f"Repository: {result.repo_path}")
+    typer.echo(f"Python files: {len(result.python_files)}")
+    typer.echo(f"Declared dependencies: {len(result.declarations)}")
+    for declaration in result.declarations:
+        version = declaration.version or "unpinned"
+        typer.echo(f"  {declaration.name} {version} ({declaration.source_file})")
+    if not result.usages:
+        typer.echo("Usages: none")
+        return
+    typer.echo(f"Usages: {len(result.usages)}")
+    for usage in result.usages:
+        typer.echo(
+            f"  {usage.file}:{usage.line} {usage.kind} {usage.symbol} | {usage.snippet}"
+        )
+
+
 @app.command()
-def scan(repo: Path = typer.Argument(..., exists=True, help="Repository to scan.")) -> None:
+def scan(
+    repo: Path = typer.Argument(..., exists=True, help="Repository to scan."),
+    dependency: str | None = typer.Option(
+        None, "--dependency", help="Only report usages for this dependency."
+    ),
+) -> None:
     """Scan a repository for dependency declarations and usages."""
-    _pending("scan")
+    result = scan_repository(repo, dependency)
+    _print_scan(result)
+    if dependency is not None and not result.declared:
+        raise typer.Exit(code=2)
+
+    if dependency is None:
+        seen: set[str] = set()
+        for declaration in result.declarations:
+            key = normalize_name(declaration.name)
+            if key in seen:
+                continue
+            seen.add(key)
+            typer.echo()
+            typer.echo(f"Usages for {declaration.name}:")
+            _print_scan(scan_repository(repo, declaration.name))
 
 
 @app.command("index-docs")

@@ -21,3 +21,24 @@ def test_version() -> None:
 def test_scan_requires_existing_repo(tmp_path) -> None:
     result = runner.invoke(app, ["scan", str(tmp_path / "missing")])
     assert result.exit_code != 0
+
+
+def test_scan_lists_usages(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    source = repo / "src" / "app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("from lib import old_api\n\nold_api()\n", encoding="utf-8")
+    (repo / "requirements.txt").write_text("lib==1.0\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["scan", str(repo), "--dependency", "lib"])
+    assert result.exit_code == 0
+    assert "Usages: 2" in result.stdout
+    assert "lib.old_api" in result.stdout
+
+
+def test_scan_unknown_dependency_exits_two(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("lib==1.0\n", encoding="utf-8")
+    result = runner.invoke(app, ["scan", str(repo), "--dependency", "other"])
+    assert result.exit_code == 2
