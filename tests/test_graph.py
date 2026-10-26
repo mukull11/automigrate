@@ -215,3 +215,77 @@ def test_max_iterations_is_enforced(tmp_path) -> None:
     assert result.status.value == "REQUIRES_HUMAN_REVIEW"
     assert "maximum iterations" in (result.state.flag_reason or "")
     assert len(result.commits) == 2
+
+
+def test_flags_insufficient_evidence_without_patching(tmp_path) -> None:
+    case = tmp_path / "case"
+    repo = case / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "tests").mkdir()
+    source = "from lib import old_api\n\n\ndef call_api():\n    return old_api()\n"
+    (repo / "src" / "app.py").write_text(source, encoding="utf-8")
+    (repo / "tests" / "test_app.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "\n"
+        "def test_source():\n"
+        "    path = Path(__file__).resolve().parents[1] / 'src' / 'app.py'\n"
+        "    assert 'old_api()' in path.read_text(encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (repo / "requirements.txt").write_text("lib==1.0\n", encoding="utf-8")
+
+    docs = case / "docs"
+    docs.mkdir()
+    doc_text = (
+        "# Behavior change\n\n"
+        "old_api behavior changed in version 2.0. "
+        "No documented replacement exists.\n"
+    )
+    (docs / "guide.md").write_text(doc_text, encoding="utf-8")
+    chunk_id = chunk_text(doc_text, "guide.md")[0].chunk_id
+    plan = {
+        "summary": "rename old_api to new_api",
+        "changes": [
+            {
+                "file": "src/app.py",
+                "old_symbol": "old_api",
+                "new_symbol": "new_api",
+                "description": "rename old_api to new_api",
+                "confidence": 0.9,
+                "cites": [chunk_id],
+            }
+        ],
+        "expected_effect": "tests pass",
+    }
+    (case / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+    (case / "patch.txt").write_text(
+        "FILE: src/app.py\n"
+        "<<<<<<< SEARCH\n"
+        "from lib import old_api\n"
+        "=======\n"
+        "from lib import new_api\n"
+        ">>>>>>> REPLACE\n",
+        encoding="utf-8",
+    )
+
+    before = tree_checksum(repo)
+    result = run_migration(
+        repo,
+        "lib",
+        "1.0",
+        "2.0",
+        docs_dir=docs,
+        llm="mock",
+        outputs_dir=tmp_path / "outputs",
+        db_path=tmp_path / "automigrate.db",
+    )
+
+    assert result.status.value == "REQUIRES_HUMAN_REVIEW"
+    assert result.state.diagnosis.value == "INSUFFICIENT_EVIDENCE"
+    assert result.commits == []
+    workspace_source = (result.workspace_path / "src" / "app.py").read_text(
+        encoding="utf-8"
+    )
+    assert workspace_source == source
+    assert tree_checksum(repo) == before

@@ -19,6 +19,53 @@ class PlanValidationError(RuntimeError):
     pass
 
 
+INSUFFICIENT_EVIDENCE_MARKER = "INSUFFICIENT_EVIDENCE"
+
+
+def insufficient_evidence_plan(reason: str) -> Plan:
+    """Build the plan used when evidence names no safe replacement."""
+
+    return Plan(
+        summary=f"{INSUFFICIENT_EVIDENCE_MARKER}: {reason}",
+        changes=[],
+        expected_effect="No safe change: the retrieved docs name no replacement.",
+    )
+
+
+def is_insufficient_evidence_plan(plan: Plan) -> bool:
+    return plan.summary.startswith(INSUFFICIENT_EVIDENCE_MARKER)
+
+
+def _symbol_documented(symbol: str, evidence_text: str) -> bool:
+    needle = symbol.strip().lower()
+    if not needle:
+        return False
+    haystack = evidence_text.lower()
+    if needle in haystack:
+        return True
+    leaf = needle.rsplit(".", 1)[-1]
+    return leaf in haystack
+
+
+def _undocumented_changes(plan: Plan, state: AgentState) -> list[str]:
+    """Return confident planned changes whose replacement is not in the docs."""
+
+    evidence_text = "\n".join(item.text for item in state.evidence)
+    missing: list[str] = []
+    for change in plan.changes:
+        if change.confidence < 0.5:
+            continue
+        if change.new_symbol is None:
+            missing.append(change.old_symbol)
+            continue
+        if change.new_symbol == change.old_symbol:
+            continue
+        if not _symbol_documented(change.new_symbol, evidence_text):
+            missing.append(change.new_symbol)
+    return missing
+
+
+
 def build_plan_prompt(state: AgentState) -> str:
     usage_lines = [
         f"- {usage.file}:{usage.line} {usage.kind} {usage.symbol} | {usage.snippet}"
@@ -66,6 +113,7 @@ class Planner:
         prompt = build_plan_prompt(state)
         feedback = ""
         last_error: Exception | None = None
+        last_plan: Plan | None = None
         for _ in range(self.retries + 1):
             raw = self.llm.complete(
                 prompt + feedback,
@@ -74,11 +122,31 @@ class Planner:
                 iteration=state.iteration,
             )
             try:
-                return parse_plan(raw, allowed)
+                plan = parse_plan(raw, allowed)
             except (PlanValidationError, LLMParseError) as exc:
                 last_error = exc
                 feedback = (
                     "\n\nYour previous response was rejected: "
                     f"{exc}\nReturn only a corrected JSON object using the allowed chunk ids."
                 )
+                continue
+            last_plan = plan
+            missing = _undocumented_changes(plan, state)
+            if not missing:
+                return plan
+            last_error = PlanValidationError(
+                "retrieved evidence does not name a replacement for: "
+                + ", ".join(sorted(set(missing)))
+            )
+            feedback = (
+                "\n\nYour previous response was rejected: "
+                f"{last_error}\nOnly cite documented replacements, or return a plan "
+                "with an empty changes list if the documentation names no replacement."
+            )
+        if last_plan is not None:
+            missing = _undocumented_changes(last_plan, state)
+            return insufficient_evidence_plan(
+                "retrieved evidence does not name a replacement for: "
+                + ", ".join(sorted(set(missing)))
+            )
         raise PlanValidationError(f"planner failed after retry: {last_error}")

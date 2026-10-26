@@ -13,7 +13,11 @@ from pathlib import Path
 from automigrate import db
 from automigrate.agent.diagnoser import Diagnoser, DiagnosisError
 from automigrate.agent.patcher import Patcher, PatchError
-from automigrate.agent.planner import Planner, PlanValidationError
+from automigrate.agent.planner import (
+    Planner,
+    PlanValidationError,
+    is_insufficient_evidence_plan,
+)
 from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
 from automigrate.llm import RecordingLLM, create_adapter
@@ -308,6 +312,10 @@ class MigrationGraph:
             self._flag(f"LLM error during planning: {exc}", tool_error=True)
             return None
         self.state.plan = plan
+        if is_insufficient_evidence_plan(plan):
+            self.state.diagnosis = Diagnosis.INSUFFICIENT_EVIDENCE
+            self._flag(plan.summary)
+            return None
         confident = [change for change in plan.changes if change.confidence >= 0.5]
         if not confident:
             self._flag("plan has no change with confidence >= 0.5")

@@ -5,7 +5,12 @@ import pytest
 
 from automigrate.agent.diagnoser import Diagnoser, DiagnosisError, parse_diagnosis
 from automigrate.agent.patcher import Patcher, PatchError, parse_patch
-from automigrate.agent.planner import Planner, PlanValidationError, parse_plan
+from automigrate.agent.planner import (
+    Planner,
+    PlanValidationError,
+    is_insufficient_evidence_plan,
+    parse_plan,
+)
 from automigrate.llm.base import LLMAdapter
 from automigrate.llm.mock import MockLLM
 from automigrate.state import (
@@ -227,6 +232,28 @@ def test_planner_retries_then_succeeds(monkeypatch) -> None:
     llm = QueuedLLM(["not json", good])
     assert Planner(llm).propose(state).summary == "rename old_api"
     assert llm.calls == 2
+
+
+def test_planner_returns_insufficient_evidence_for_undocumented_replacement() -> None:
+    state = make_state(tmp_path=None)
+    state.evidence = [
+        Evidence(
+            chunk_id="c1",
+            source_doc="guide.md",
+            heading_path="Behavior changes",
+            score=1.0,
+            text="old_api behavior changed in 2.0; no documented replacement exists.",
+        )
+    ]
+    plan_text = json.dumps(make_plan(cites=["c1"]).model_dump())
+    llm = MockLLM(plan_text=plan_text)
+
+    result = Planner(llm).propose(state)
+
+    assert is_insufficient_evidence_plan(result)
+    assert result.changes == []
+    assert "new_api" in result.summary
+    assert len(llm.calls) == 2
 
 
 def test_diagnoser_parses_result() -> None:
