@@ -13,6 +13,7 @@ from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
 from automigrate.rag.index import index_documents
+from automigrate.report import ReportError, write_report
 from automigrate.state import Status
 
 app = typer.Typer(
@@ -22,11 +23,6 @@ app = typer.Typer(
     add_completion=False,
     invoke_without_command=True,
 )
-
-
-def _pending(command: str) -> None:
-    typer.echo(f"{command} is not implemented yet.", err=True)
-    raise typer.Exit(code=1)
 
 
 @app.callback()
@@ -152,9 +148,30 @@ def migrate(
 
 
 @app.command()
-def report(session_id: str = typer.Argument(..., help="Migration session id.")) -> None:
+def report(
+    session_id: str = typer.Argument(..., help="Migration session id."),
+    db_path: Path | None = typer.Option(None, "--db", help="SQLite database path."),
+    out: Path | None = typer.Option(None, "--out", help="Output directory."),
+) -> None:
     """Render the report for a completed migration session."""
-    _pending("report")
+    settings = get_settings(
+        **{
+            **({"db_path": db_path} if db_path else {}),
+            **({"outputs_dir": out} if out else {}),
+        }
+    )
+    conn = db.init_db(settings.db_path)
+    try:
+        result = write_report(conn, session_id, settings.outputs_dir)
+    except ReportError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        conn.close()
+
+    typer.echo(result.markdown)
+    typer.echo(f"Report written to {result.report_path}")
+    raise typer.Exit(code=0 if result.status == Status.SUCCESSFUL.value else 2)
 
 
 @app.command("eval")

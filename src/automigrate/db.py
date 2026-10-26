@@ -423,6 +423,53 @@ def get_report(conn: sqlite3.Connection, session_id: str) -> dict[str, Any] | No
     return dict(row) if row else None
 
 
+def get_session_summary(
+    conn: sqlite3.Connection, session_id: str
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT s.id, s.status, s.iterations, s.final_reason, s.started_at, s.ended_at,
+               s.repo_id, s.dependency_id,
+               r.name AS repo_name, r.path AS repo_path,
+               d.name AS dependency, d.source_version, d.target_version
+        FROM migration_session AS s
+        JOIN repository AS r ON r.id = s.repo_id
+        JOIN dependency AS d ON d.id = s.dependency_id
+        WHERE s.id = ?
+        """,
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def list_test_runs(
+    conn: sqlite3.Connection, session_id: str
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM test_run
+        WHERE session_id = ?
+        ORDER BY iteration ASC, id ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_migration_changes(
+    conn: sqlite3.Connection, session_id: str
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM migration_change
+        WHERE session_id = ?
+        ORDER BY iteration ASC, id ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_schema_version(conn: sqlite3.Connection) -> int | None:
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     return int(row["version"]) if row else None
