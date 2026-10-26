@@ -1,0 +1,30 @@
+# Secrets: never commit these
+.env
+.env.*
+!.env.example
+*.key
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# AutoMigrate runtime output
+*.db
+outputs/
+workspace/
+benchmarks/results/
+
+# Editors and OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
