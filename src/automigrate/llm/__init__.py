@@ -8,17 +8,34 @@ from automigrate.llm.chain import (
     ModelChainLLM,
     available_models,
     build_model_chain,
+    create_provider_chain,
 )
-from automigrate.llm.keys import MISSING_KEY_MESSAGE, MissingKeyError, resolve_api_key
+from automigrate.llm.keys import (
+    MISSING_KEY_MESSAGE,
+    MissingKeyError,
+    resolve_api_key,
+    select_default_provider,
+)
+from automigrate.llm.models import CheckResult, ModelListing, check_model, list_models
 from automigrate.llm.openai import OpenAILLM
+from automigrate.llm.providers import (
+    PROVIDER_IDS,
+    PROVIDER_LIST,
+    PROVIDERS,
+    Provider,
+    get_provider,
+)
 from automigrate.llm.recording import RecordingLLM
 
 API_KEY_MESSAGE = MISSING_KEY_MESSAGE
 
 
-def require_api_key() -> None:
+def require_api_key(provider: str | Provider | None = None) -> None:
     try:
-        resolve_api_key(None)
+        if provider is None:
+            resolve_api_key(None)
+        else:
+            resolve_api_key(provider, None)
     except MissingKeyError as exc:
         raise LLMConfigurationError(str(exc)) from exc
 
@@ -38,11 +55,22 @@ __all__ = [
     "LLMError",
     "MissingKeyError",
     "ModelChainLLM",
+    "ModelListing",
+    "CheckResult",
     "OpenAILLM",
+    "PROVIDER_IDS",
+    "PROVIDER_LIST",
+    "PROVIDERS",
+    "Provider",
     "RecordingLLM",
     "available_models",
     "build_model_chain",
+    "check_model",
     "create_adapter",
+    "create_provider_chain",
+    "get_provider",
+    "list_models",
     "require_api_key",
     "resolve_api_key",
+    "select_default_provider",
 ]

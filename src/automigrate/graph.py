@@ -27,6 +27,10 @@ from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
 from automigrate.llm import RecordingLLM, create_adapter
 from automigrate.llm.base import LLMAdapter, LLMError
+from automigrate.llm.chain import create_provider_chain
+from automigrate.llm.keys import resolve_api_key
+from automigrate.llm.models import check_model, list_models, redact_secret
+from automigrate.llm.providers import get_provider
 from automigrate.rag.index import clear_dependency_chunks, index_documents, index_text_documents
 from automigrate.rag.retriever import build_query, retrieve
 from automigrate.state import (
@@ -78,6 +82,7 @@ class MigrationGraph:
         to_version: str,
         docs_dir: str | Path | None = None,
         model: str | None = None,
+        provider: str | None = None,
         api_key: str | None = None,
         max_iterations: int = 5,
         outputs_dir: str | Path = "outputs",
@@ -102,6 +107,7 @@ class MigrationGraph:
         self.to_version = to_version
         self.docs_dir = Path(docs_dir).resolve() if docs_dir else None
         self.model = model
+        self.provider = provider
         self.api_key = api_key
         self.max_iterations = max_iterations
         self.outputs_dir = Path(outputs_dir).resolve()
@@ -280,10 +286,7 @@ class MigrationGraph:
         self.baseline_sha = self.repo.head_sha()
         self.sandbox = Sandbox(self.workspace)
 
-        adapter = self.llm_adapter or create_adapter(
-            self.model, api_key=self.api_key
-        )
-        self.llm = RecordingLLM(adapter, self.conn, self.session_id)
+        self.llm = self._build_llm()
 
         self.state = AgentState(
             session_id=self.session_id,
@@ -309,6 +312,86 @@ class MigrationGraph:
         clear_dependency_chunks(self.conn, self.dependency)
         if self.docs_dir is not None:
             index_documents(self.conn, self.docs_dir, self.dependency, self.to_version)
+
+    def _record_model_attempt(
+        self,
+        *,
+        provider: str | None,
+        model: str,
+        status_code: int | None,
+        error: str | None,
+        success: bool,
+    ) -> None:
+        iteration = self.state.iteration if self.state is not None else 0
+        summary = (
+            f"provider={provider or 'unknown'} model={model} "
+            f"status={status_code if status_code is not None else 'ok'} "
+            f"result={'success' if success else 'error'}"
+        )
+        if error:
+            summary = (
+                f"{summary} error={redact_secret(str(error), self.api_key)}"
+            )
+        db.add_agent_action(
+            self.conn,
+            self.session_id,
+            iteration,
+            "LLM",
+            "model_attempt",
+            "",
+            summary[:1000],
+            0,
+        )
+
+    def _build_llm(self) -> LLMAdapter:
+        if self.llm_adapter is not None:
+            return RecordingLLM(
+                self.llm_adapter,
+                self.conn,
+                self.session_id,
+            )
+        if self.provider is None:
+            adapter = create_adapter(self.model, api_key=self.api_key)
+            return RecordingLLM(adapter, self.conn, self.session_id)
+
+        selected = get_provider(self.provider)
+        key = resolve_api_key(selected, self.api_key)
+        base_url = selected.base_url
+        listing = list_models(selected, key, base_url=base_url)
+        models = list(listing.models)
+        requested = (self.model or "").strip()
+        if requested:
+            if requested in models:
+                index = models.index(requested)
+                models = models[index:] + models[:index]
+            else:
+                models = [requested, *models]
+        if not models:
+            raise LLMError(
+                f"{selected.display_name} returned no models"
+            )
+        checked_model = models[0]
+        check = check_model(
+            selected, checked_model, key, base_url=base_url
+        )
+        if check.fatal:
+            raise LLMError(
+                f"{selected.display_name} rejected model {checked_model} "
+                f"(HTTP {check.status_code}): {check.error or 'unknown error'}"
+            )
+        chain = create_provider_chain(
+            selected,
+            models,
+            api_key=key,
+            base_url=base_url,
+            on_attempt=self._record_model_attempt,
+        )
+        return RecordingLLM(
+            chain,
+            self.conn,
+            self.session_id,
+            record_attempts=False,
+        )
 
     def _baseline(self) -> None:
         assert self.state is not None
@@ -642,6 +725,7 @@ def run_migration(
     *,
     docs_dir: str | Path | None = None,
     model: str | None = None,
+    provider: str | None = None,
     api_key: str | None = None,
     max_iterations: int = 5,
     outputs_dir: str | Path = "outputs",
@@ -661,6 +745,7 @@ def run_migration(
         to_version=to_version,
         docs_dir=docs_dir,
         model=model,
+        provider=provider,
         api_key=api_key,
         max_iterations=max_iterations,
         outputs_dir=outputs_dir,

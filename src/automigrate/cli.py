@@ -13,7 +13,12 @@ from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
 from automigrate.llm import LLMConfigurationError
-from automigrate.llm.keys import MissingKeyError, resolve_api_key
+from automigrate.llm.keys import (
+    MissingKeyError,
+    resolve_api_key,
+    select_default_provider,
+)
+from automigrate.llm.providers import UnknownProviderError, get_provider
 from automigrate.rag.index import index_documents
 from automigrate.report import ReportError, write_report
 from automigrate.state import Status
@@ -118,8 +123,13 @@ def migrate(
     max_iterations: int | None = typer.Option(
         None, "--max-iterations", min=1, help="Maximum repair iterations."
     ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="LLM provider id (for example gemini, openai, anthropic, groq).",
+    ),
     model: str | None = typer.Option(
-        None, "--model", help="Primary model; falls back through the configured chain."
+        None, "--model", help="Primary model for the selected provider."
     ),
     out: Path | None = typer.Option(None, "--out", help="Output directory."),
     api_key: str | None = typer.Option(
@@ -133,10 +143,23 @@ def migrate(
         max_iterations=max_iterations, out=out, model=model
     )
     try:
-        resolved_key = resolve_api_key(api_key)
+        selected = get_provider(provider) if provider else select_default_provider()
+    except UnknownProviderError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
     except MissingKeyError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
+    try:
+        resolved_key = resolve_api_key(selected, api_key)
+    except MissingKeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    selected_model = (settings.model or "").strip()
+    if not selected_model and selected.default_models:
+        selected_model = selected.default_models[0]
+    typer.echo(f"Provider: {selected.id} ({selected.display_name})")
+    typer.echo(f"Model: {selected_model or 'provider default'}")
     try:
         result = run_migration(
             repository,
@@ -144,7 +167,8 @@ def migrate(
             current_version,
             target_version,
             docs_dir=docs or settings.docs_dir,
-            model=settings.model,
+            model=selected_model or None,
+            provider=selected.id,
             api_key=resolved_key,
             max_iterations=settings.max_iterations,
             outputs_dir=settings.outputs_dir,
