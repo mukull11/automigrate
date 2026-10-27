@@ -92,6 +92,7 @@ class TestRunResult(BaseModel):
     errors: int = 0
     failed_test_names: list[str] = Field(default_factory=list)
     first_traceback: str | None = None
+    collection_error: bool = False
     ruff_issue_count: int = 0
     ruff_messages: list[str] = Field(default_factory=list)
     duration_s: float = 0.0

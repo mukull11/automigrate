@@ -5,6 +5,14 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def default_outputs_dir() -> Path:
+    """Return the project-level outputs folder, independent of the cwd."""
+
+    return PROJECT_ROOT / "outputs"
+
 
 class Settings(BaseSettings):
     """Runtime settings for AutoMigrate.
@@ -22,7 +30,7 @@ class Settings(BaseSettings):
     )
 
     db_path: Path = Path("automigrate.db")
-    outputs_dir: Path = Path("outputs")
+    outputs_dir: Path = Field(default_factory=default_outputs_dir)
     docs_dir: Path | None = None
     max_iterations: int = Field(default=5, ge=1)
     top_k: int = Field(default=6, ge=1)

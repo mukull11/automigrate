@@ -10,6 +10,12 @@ from typing import Protocol
 
 from automigrate.apidiff.diff import diff_apis
 from automigrate.apidiff.models import ApiDiff
+from automigrate.apidiff.runtime import (
+    NameCheck,
+    add_removed_names,
+    check_names_at_targets,
+    collect_dependency_names,
+)
 from automigrate.apidiff.symbols import extract_symbols
 from automigrate.ingest.dependencies import import_module_roots, normalize_name
 from automigrate.tools.subprocess import SubprocessRunner, ToolError
@@ -32,6 +38,8 @@ class InstalledDocument:
 class ApiDiffBundle:
     diff: ApiDiff
     documents: list[InstalledDocument] = field(default_factory=list)
+    runtime_checks: list[NameCheck] = field(default_factory=list)
+    removed_names: list[NameCheck] = field(default_factory=list)
 
 
 class ApiDetector(Protocol):
@@ -148,6 +156,7 @@ class PipApiDiffDetector:
         target_version: str,
         workspace: str | Path,
     ) -> ApiDiffBundle:
+        references = collect_dependency_names(workspace, dependency)
         with tempfile.TemporaryDirectory(prefix="automigrate-api-old-") as old_dir:
             with tempfile.TemporaryDirectory(prefix="automigrate-api-new-") as new_dir:
                 old_target = Path(old_dir)
@@ -178,8 +187,24 @@ class PipApiDiffDetector:
                     current_version=current_version,
                     target_version=target_version,
                 )
+                runtime_checks = check_names_at_targets(
+                    old_target,
+                    new_target,
+                    references,
+                    python=python_executable(),
+                    timeout=self.timeout,
+                )
+                removed_names = [
+                    check for check in runtime_checks if check.removed
+                ]
+                diff = add_removed_names(diff, removed_names)
                 documents = _collect_documents(new_target)
-        return ApiDiffBundle(diff=diff, documents=documents)
+        return ApiDiffBundle(
+            diff=diff,
+            documents=documents,
+            runtime_checks=runtime_checks,
+            removed_names=removed_names,
+        )
 
 
 def python_executable() -> str:

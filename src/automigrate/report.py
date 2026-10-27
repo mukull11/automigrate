@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from automigrate import db
+from automigrate.config import default_outputs_dir
 
 FLAGGED_STATUSES = {"REQUIRES_HUMAN_REVIEW", "FAILED", "PARTIAL"}
 
@@ -186,7 +187,7 @@ def build_report(conn, session_id: str) -> ReportResult:
         "model_attempts": attempts,
         "unresolved_failures": unresolved,
     }
-    outputs_dir = Path("outputs")
+    outputs_dir = default_outputs_dir()
     report_path = outputs_dir / session_id / "report.md"
     return ReportResult(
         session_id=session_id,
@@ -198,11 +199,16 @@ def build_report(conn, session_id: str) -> ReportResult:
     )
 
 
-def write_report(conn, session_id: str, outputs_dir: str | Path = "outputs") -> ReportResult:
+def write_report(
+    conn,
+    session_id: str,
+    outputs_dir: str | Path | None = None,
+) -> ReportResult:
     """Render and persist report.md/report.json for a session."""
 
     result = build_report(conn, session_id)
-    directory = Path(outputs_dir) / session_id
+    base = Path(outputs_dir) if outputs_dir is not None else default_outputs_dir()
+    directory = base / session_id
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / "report.md"
     report_json_path = directory / "report.json"

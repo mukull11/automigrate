@@ -23,7 +23,9 @@ from automigrate.agent.planner import (
 )
 from automigrate.apidiff.detector import ApiDetector, ApiDiffError, PipApiDiffDetector
 from automigrate.apidiff.diff import filter_public_diff
+from automigrate.apidiff.runtime import add_removed_names
 from automigrate.apidiff.usages import collect_imported_modules, scan_api_usages
+from automigrate.config import default_outputs_dir
 from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
 from automigrate.llm import RecordingLLM, create_adapter
@@ -73,6 +75,26 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _first_import_error_line(traceback: str | None) -> str:
+    if not traceback:
+        return ""
+    for line in traceback.splitlines():
+        text = line.strip()
+        if text.startswith("E ") and (
+            "ModuleNotFoundError" in text or "ImportError" in text
+        ):
+            return text[2:].strip()
+    for line in traceback.splitlines():
+        text = line.strip()
+        if "ModuleNotFoundError" in text or "ImportError" in text:
+            return text
+    for line in traceback.splitlines():
+        text = line.strip()
+        if text:
+            return text[2:].strip() if text.startswith("E ") else text
+    return ""
+
+
 class MigrationGraph:
     def __init__(
         self,
@@ -85,11 +107,11 @@ class MigrationGraph:
         model: str | None = None,
         provider: str | None = None,
         base_url: str | None = None,
-        api_key: str | None = None,
-        max_iterations: int = 5,
-        outputs_dir: str | Path = "outputs",
-        db_path: str | Path = "automigrate.db",
-        top_k: int = 6,
+    api_key: str | None = None,
+    max_iterations: int = 5,
+    outputs_dir: str | Path | None = None,
+    db_path: str | Path = "automigrate.db",
+    top_k: int = 6,
         score_threshold: float = 0.0,
         subprocess_timeout: int = 120,
         session_id: str | None = None,
@@ -113,7 +135,11 @@ class MigrationGraph:
         self.base_url = base_url
         self.api_key = api_key
         self.max_iterations = max_iterations
-        self.outputs_dir = Path(outputs_dir).resolve()
+        self.outputs_dir = (
+            Path(outputs_dir).resolve()
+            if outputs_dir is not None
+            else default_outputs_dir()
+        )
         self.db_path = Path(db_path)
         self.top_k = top_k
         self.score_threshold = score_threshold
@@ -139,6 +165,7 @@ class MigrationGraph:
         self._scan: ScanResult | None = None
         self.baseline_sha: str | None = None
         self._clone_dir: Path | None = None
+        self._baseline_done = False
 
     def _record(self, stage: str, summary: str, action_type: str = "transition") -> None:
         assert self.state is not None
@@ -214,7 +241,15 @@ class MigrationGraph:
 
     def _finish(self, final_status: Status, reason: str | None = None) -> None:
         assert self.state is not None
-        if final_status == Status.SUCCESSFUL and not self.state.has_tests:
+        not_collected = (
+            self._collection_failure_reason(self.state.latest)
+            if self._baseline_done
+            else None
+        )
+        if not_collected:
+            final_status = Status.UNVERIFIED
+            reason = not_collected
+        elif final_status == Status.SUCCESSFUL and not self.state.has_tests:
             final_status = Status.UNVERIFIED
             if not reason or "no tests found" not in reason:
                 reason = "no tests found" + (f": {reason}" if reason else "")
@@ -400,12 +435,26 @@ class MigrationGraph:
             record_attempts=False,
         )
 
+    def _collection_failure_reason(self, result: TestRunResult) -> str | None:
+        if not (self.workspace / "tests").is_dir():
+            return None
+        collected = result.passed + result.failed + result.errors
+        if collected == 0 or result.collection_error:
+            detail = _first_import_error_line(result.first_traceback)
+            return (
+                f"tests not collected: "
+                f"{detail or 'pytest collected 0 tests'}"
+            )
+        return None
+
     def _baseline(self) -> None:
         assert self.state is not None
         result = self._validate()
         self.state.baseline = result
-        self.state.has_tests = (result.passed + result.failed + result.errors) > 0
+        collected = result.passed + result.failed + result.errors
+        self.state.has_tests = collected > 0
         self.previous_passed = result.passed
+        self._baseline_done = True
         self._record(
             Stage.VALIDATE.value,
             f"baseline: passed={result.passed}, failed={result.failed}, "
@@ -438,10 +487,27 @@ class MigrationGraph:
         bundle = self.api_detector.detect(
             self.dependency, self.from_version, self.to_version, self.workspace
         )
+        runtime_checks = list(getattr(bundle, "runtime_checks", []))
+        runtime_removed = list(getattr(bundle, "removed_names", []))
+        bundle.diff = add_removed_names(bundle.diff, runtime_removed)
         bundle.diff = filter_public_diff(
             bundle.diff, collect_imported_modules(self.workspace)
         )
         self.state.api_diff = bundle.diff
+        if runtime_checks:
+            checked = ", ".join(
+                sorted(check.qualified_name for check in runtime_checks)
+            )
+            removed = ", ".join(
+                sorted(check.qualified_name for check in runtime_removed)
+            )
+            self._record(
+                Stage.DETECT.value,
+                f"runtime name check: checked {len(runtime_checks)} names "
+                f"[{checked}]; removed {len(runtime_removed)} "
+                f"[{removed or 'none'}]",
+                "runtime_name_check",
+            )
         if bundle.documents:
             index_text_documents(
                 self.conn,
@@ -739,9 +805,9 @@ def run_migration(
     provider: str | None = None,
     base_url: str | None = None,
     api_key: str | None = None,
-    max_iterations: int = 5,
-    outputs_dir: str | Path = "outputs",
-    db_path: str | Path = "automigrate.db",
+        max_iterations: int = 5,
+        outputs_dir: str | Path | None = None,
+        db_path: str | Path = "automigrate.db",
     top_k: int = 6,
     score_threshold: float = 0.0,
     subprocess_timeout: int = 120,

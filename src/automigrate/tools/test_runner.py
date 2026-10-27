@@ -64,6 +64,7 @@ def parse_pytest_report(
         + len(collector_errors),
         failed_test_names=failed_names,
         first_traceback=_first_traceback(report),
+        collection_error=bool(collector_errors),
         ruff_issue_count=ruff_issue_count,
         duration_s=float(report.get("duration", duration_s) or duration_s),
     )
