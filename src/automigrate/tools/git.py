@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 
@@ -118,3 +119,53 @@ def tree_checksum(root: str | Path) -> str:
         digest.update(path.read_bytes())
         digest.update(b"\x00")
     return digest.hexdigest()
+
+REPOSITORY_URL_PREFIXES = ("http://", "https://", "git@", "ssh://", "git://")
+
+
+def is_repository_url(value: str) -> bool:
+    """Return True when the input looks like a git repository URL."""
+
+    text = value.strip()
+    if not text:
+        return False
+    if text.lower().startswith(REPOSITORY_URL_PREFIXES):
+        return True
+    return text.endswith(".git")
+
+
+def _authenticated_url(url: str, token: str | None) -> str:
+    if not token or not url.lower().startswith("https://github.com/"):
+        return url
+    remainder = url[len("https://") :]
+    return f"https://x-access-token:{token}@{remainder}"
+
+
+def clone_repository(
+    url: str,
+    destination: str | Path,
+    *,
+    timeout: int = 300,
+) -> Path:
+    """Clone ``url`` into ``destination`` using an optional GITHUB_TOKEN."""
+
+    destination_path = Path(destination).resolve()
+    if destination_path.exists() and any(destination_path.iterdir()):
+        raise GitError(f"clone destination is not empty: {destination_path}")
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    token = os.environ.get("GITHUB_TOKEN")
+    remote = _authenticated_url(url, token)
+    runner = SubprocessRunner(destination_path.parent, timeout=timeout)
+    try:
+        result = runner.run("git", ["clone", "--depth", "1", remote, str(destination_path)])
+    except Exception as exc:  # noqa: BLE001 - sanitize before re-raising
+        message = str(exc)
+        if token:
+            message = message.replace(token, "***")
+        raise GitError(f"could not clone repository: {message}") from None
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if token:
+            detail = detail.replace(token, "***")
+        raise GitError(f"could not clone repository: {detail or 'git clone failed'}")
+    return destination_path

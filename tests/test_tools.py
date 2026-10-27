@@ -5,7 +5,13 @@ from pathlib import Path
 import pytest
 
 from automigrate.tools.filesystem import ReadOnlyPath, Sandbox, SandboxViolation
-from automigrate.tools.git import GitError, GitRepo, prepare_workspace, tree_checksum
+from automigrate.tools.git import (
+    GitError,
+    GitRepo,
+    is_repository_url,
+    prepare_workspace,
+    tree_checksum,
+)
 from automigrate.tools.lint_runner import RuffRunner
 from automigrate.tools.subprocess import DisallowedCommand, SubprocessRunner
 from automigrate.tools.test_runner import PytestRunner, parse_pytest_report
@@ -164,3 +170,11 @@ def test_git_repo_rejects_failed_command(tmp_path) -> None:
     repo = GitRepo(tmp_path)
     with pytest.raises(GitError):
         repo.head_sha()
+
+
+def test_repository_url_detection() -> None:
+    assert is_repository_url("https://github.com/org/repo")
+    assert is_repository_url("git@github.com:org/repo.git")
+    assert is_repository_url("org/repo.git")
+    assert not is_repository_url(r"C:\work\repo")
+    assert not is_repository_url(".")

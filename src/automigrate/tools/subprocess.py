@@ -10,7 +10,7 @@ from pathlib import Path
 
 from automigrate.tools.filesystem import Sandbox
 
-ALLOWED_COMMANDS = frozenset({"pytest", "ruff", "git"})
+ALLOWED_COMMANDS = frozenset({"pytest", "ruff", "git", "pip"})
 
 
 class ToolError(RuntimeError):
