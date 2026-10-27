@@ -7,8 +7,10 @@ the small registry default list and returns a sanitized reason.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, NamedTuple
 
+from automigrate.llm.base import http_status_code
 from automigrate.llm.providers import Provider, get_provider
 
 # Model ids containing one of these fragments are not usable for chat planning.
@@ -221,3 +223,113 @@ def list_models(
     except Exception as exc:  # noqa: BLE001 - listing failures are non-fatal
         reason = redact_secret(str(exc) or type(exc).__name__, key)
         return ModelListing(defaults, reason)
+
+
+FATAL_MODEL_STATUSES = frozenset({401, 403, 404, 429})
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """Outcome of a one-token model availability check."""
+
+    ok: bool
+    status_code: int | None = None
+    error: str | None = None
+
+    def __bool__(self) -> bool:
+        return self.ok
+
+    @property
+    def fatal(self) -> bool:
+        return not self.ok and self.status_code in FATAL_MODEL_STATUSES
+
+
+def _messages_url(provider: Provider, base_url: str | None) -> str:
+    base = (base_url or provider.base_url or "").rstrip("/")
+    if not base:
+        raise ValueError("this provider needs an explicit base URL")
+    if provider.sdk == "anthropic":
+        return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+    return f"{base}/chat/completions"
+
+
+def _check_payload(provider: Provider, model: str) -> dict[str, Any]:
+    if provider.sdk == "anthropic":
+        return {
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        }
+    return {
+        "model": model,
+        "max_tokens": 1,
+        "temperature": 0,
+        "messages": [{"role": "user", "content": "ping"}],
+    }
+
+
+def _check_with_client(provider: Provider, model: str, client: Any) -> None:
+    chat = getattr(client, "chat", None)
+    completions = getattr(chat, "completions", None)
+    create = getattr(completions, "create", None)
+    if callable(create):
+        create(**_check_payload(provider, model))
+        return
+    messages = getattr(client, "messages", None)
+    create = getattr(messages, "create", None)
+    if callable(create):
+        create(**_check_payload(provider, model))
+        return
+    post = getattr(client, "post", None)
+    if callable(post):
+        response = post(
+            _messages_url(provider, None),
+            headers=_headers(provider, client.api_key if hasattr(client, "api_key") else ""),
+            json=_check_payload(provider, model),
+        )
+        raise_for_status = getattr(response, "raise_for_status", None)
+        if callable(raise_for_status):
+            raise_for_status()
+        return
+    raise TypeError("fake client exposes no chat/messages/post method")
+
+
+def check_model(
+    provider: str | Provider,
+    model: str,
+    key: str | None,
+    *,
+    client: Any | None = None,
+    transport: Any | None = None,
+    base_url: str | None = None,
+    timeout: float = 30.0,
+) -> CheckResult:
+    """Send the smallest valid request and report whether the key/model work.
+
+    A 401, 403, 404, or 429 is fatal for the run.  Provider error text is
+    returned with the key redacted; the key is never logged here.
+    """
+
+    selected = get_provider(provider)
+    secret = key or ""
+    if client is None and not secret.strip():
+        return CheckResult(False, None, "no API key provided")
+    try:
+        if client is not None:
+            _check_with_client(selected, model, client)
+            return CheckResult(True)
+        http = _http_module()
+        with http.Client(timeout=timeout, transport=transport) as http_client:
+            response = http_client.post(
+                _messages_url(selected, base_url),
+                headers=_headers(selected, secret),
+                json=_check_payload(selected, model),
+            )
+            status = getattr(response, "status_code", None)
+            if isinstance(status, int) and 200 <= status < 300:
+                return CheckResult(True, status)
+            body = getattr(response, "text", "")
+            return CheckResult(False, status, redact_secret(str(body), secret))
+    except Exception as exc:  # noqa: BLE001 - callers decide whether it is fatal
+        status = http_status_code(exc)
+        return CheckResult(False, status, redact_secret(str(exc), secret))
