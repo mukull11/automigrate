@@ -1,35 +1,63 @@
 # AutoMigrate
 
-AutoMigrate upgrades a Python repository from one version of a dependency to a
-newer version. It detects the public API changes between the two released
-versions, scans the repository for affected usages, and runs a test-guided repair
-loop:
+AutoMigrate detects dependency API changes in a Python repository and, when it can prove a fix with tests, proposes a patch for the affected code. It never edits your original repository. All changes happen in a temporary working copy, and the result is a report you can review.
 
 ```
 Clone -> API diff -> Usage scan -> Baseline -> Plan -> Patch -> Test -> Diagnose -> (loop | Done | Flag)
 ```
 
-Validation results drive the next action. If the system cannot safely repair a
-failure it stops and flags the repository for human review. It never forces a patch
-onto the original repository.
+Test results drive the next step. When the system cannot safely repair a failure, it stops and reports why.
 
-## 60-second quickstart
+Repository: https://github.com/mukull11/automigrate
 
-Requires Windows PowerShell (or any shell), Python 3.11, `git`, `pip`, `ruff`, and
-an API key for a live OpenAI-compatible model.
+## What it does
+
+1. **Clone:** accepts a local folder or a GitHub URL and copies it into a temporary workspace.
+2. **API diff:** installs the current and target versions of the dependency into separate temporary folders with `pip install --target`, then compares their public names using `ast`. Each candidate name is also checked at runtime in both versions in a separate subprocess. This catches names removed through package internals, such as `numpy.float_`.
+3. **Usage scan:** finds every use of a changed name in the repository, with file and line.
+4. **Retrieve documentation:** indexes a docs folder passed with `--docs`, plus the README and CHANGELOG shipped with the installed target package. Retrieval uses keyword search (BM25).
+5. **Baseline:** runs `pytest` and `ruff` before any change.
+6. **Plan, patch, test:** the LLM proposes SEARCH/REPLACE edits, which must match the file exactly once. Tests and ruff are rerun after each patch. Test files are read-only to the agent.
+7. **Diagnose:** on failure, the run retries, moves to the next model of the same provider, rolls back to baseline, or stops for human review.
+8. **Report:** writes `report.md` and `report.json` with the status, detected changes, every edit with its file and line, model attempts, and test results before and after.
+
+## Status meanings
+
+| Status | Meaning |
+|---|---|
+| `SUCCESSFUL` | Tests pass after the patch and ruff has no new issues. |
+| `UNVERIFIED` | The repository has no tests, so no fix can be proven. |
+| `REQUIRES_HUMAN_REVIEW` | The tool stopped safely. Examples: no usages of the changed API, or no documented replacement (see `--allow-undocumented`). |
+| `FAILED` | An error occurred, such as a provider returning 401 or 404. The workspace is reset to baseline. |
+
+## Requirements
+
+- Windows PowerShell (or any shell), Python 3.11 or newer, and `git`
+- A key for at least one supported provider (see below)
+- A dependency published on PyPI, with both versions installable
+
+## Quickstart
 
 ```powershell
+git clone https://github.com/mukull11/automigrate.git
+cd automigrate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev,ui]"
-$env:OPENAI_API_KEY = "<your-key>"
-$env:OPENAI_BASE_URL = "https://api.groq.com/openai/v1"
-
-python -m automigrate migrate https://github.com/org/project --dependency requests --current 2.28.0 --target 2.32.0
+python -m pytest -q
 ```
 
-Or migrate a local folder whose dependency is published on PyPI:
+Run a migration. Set the key in the same window you run the command in:
 
 ```powershell
-python -m automigrate migrate C:\path\to\project --dependency requests --current 2.28.0 --target 2.32.0
+$env:GROQ_API_KEY = "<your-key>"
+python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b
+```
+
+Or migrate a local folder:
+
+```powershell
+python -m automigrate migrate C:\path\to\project --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b
 ```
 
 Open the Streamlit UI:
@@ -38,116 +66,106 @@ Open the Streamlit UI:
 python -m streamlit run app/ui.py
 ```
 
-`examples/rename_sample` is a known-broken regression fixture used by the tests.
-Its `lib` dependency is local test data, not a PyPI package, so a live run against
-it stops when pip cannot fetch a version.
+Use the URL Streamlit prints, usually `http://localhost:8501`. Keep the UI on localhost, since the API key field is only safe on a machine you control.
 
-The form asks for a repository folder path or GitHub URL, the dependency, the
-current version, the target version, and a model.
+## Providers and API keys
 
-## Environment variables
+Each provider has its own key variable. Set only the one you use.
 
-| Variable | Required | Purpose |
-|----------|----------|---------|
-| `OPENAI_API_KEY` | yes | Bearer token for the live OpenAI-compatible endpoint. Never logged or persisted. |
-| `OPENAI_BASE_URL` | no | Base URL of the endpoint (Groq, Google AI Studio, OpenAI, or a compatible gateway). |
-| `AUTOMIGRATE_MODELS` | no | Comma-separated model chain override, e.g. `openai/gpt-oss-120b,gemini-2.5-flash`. |
-| `GITHUB_TOKEN` | no | Read access token for private GitHub repositories. Never logged. |
-| `AUTOMIGRATE_MAX_ITERATIONS` | no | Repair iterations, default `5`. |
+| Provider id | Name | Key variable |
+|---|---|---|
+| `gemini` | Google Gemini | `GEMINI_API_KEY` |
+| `openai` | OpenAI | `OPENAI_API_KEY` |
+| `anthropic` | Anthropic Claude | `ANTHROPIC_API_KEY` |
+| `groq` | Groq | `GROQ_API_KEY` |
+| `qwen` | Alibaba DashScope (Qwen) | `DASHSCOPE_API_KEY` |
+| `deepseek` | DeepSeek | `DEEPSEEK_API_KEY` |
+| `xai` | xAI (Grok) | `XAI_API_KEY` |
+| `mistral` | Mistral | `MISTRAL_API_KEY` |
+| `openrouter` | OpenRouter | `OPENROUTER_API_KEY` |
+| `custom` | Any OpenAI-compatible endpoint | `AUTOMIGRATE_CUSTOM_API_KEY` |
 
-The default model chain is:
+Keys are resolved in this order: the key entered in the UI or passed with `--api-key`, then the provider's environment variable. If neither exists, the run stops before doing any work and names the variable to set.
 
-1. `openai/gpt-oss-120b` (Groq)
-2. `qwen/qwen3.8-27b` (Groq)
-3. `gemini-2.5-flash` (Google)
+Model names belong to their provider. Choose a model that the selected provider serves. A mismatch, such as a Gemini model sent to Groq, returns HTTP 404. The UI model list comes from each provider's list-models endpoint, and you can also type a model ID by hand.
 
-`--model` (CLI) and the model dropdown (UI) select the first model; on a rejected
-plan or patch, or an adapter error, AutoMigrate advances to the next model in the
-chain. If no API key is set, the command exits with a message naming
-`OPENAI_API_KEY` and `docs/real_llm.md`.
+Fallback stays within one provider. On 404 or 429, AutoMigrate tries the next model of the same provider. It never switches provider unless you choose a different one.
 
-## What it does
+## Options
 
-1. **Clone safely.** A URL input is cloned into a temporary workspace. A local
-   folder is copied. The user's original folder is never written to.
-2. **Detect API changes.** The current and target versions are installed into
-   separate temporary directories with `pip install --target`. Both package trees
-   are parsed with `ast` to extract public functions, classes, methods, parameters,
-   and module paths. The diff reports removed, added, renamed, moved, and
-   parameter-changed symbols deterministically.
-3. **Scan usages.** Every Python file in the repository is parsed to locate
-   imports, calls, attributes, and keyword arguments of affected symbols.
-4. **Retrieve documentation.** A docs folder supplied with `--docs` is indexed.
-   README and CHANGELOG files shipped in the installed target package are indexed
-   automatically.
-5. **Repair with checks.** Baseline `pytest` and `ruff` run before any edit. Each
-   iteration plans, patches with SEARCH/REPLACE blocks, then re-runs both. Bad
-   JSON or non-applying patches get one retry, then the next model, then a flag.
-   Test files are read-only to the agent.
-6. **Report honestly.** When tests pass and ruff has no new issues the status is
-   `SUCCESSFUL`. A repository without tests can only reach `UNVERIFIED`; it is
-   never reported as successful without a passing test run.
+| Option | Purpose |
+|---|---|
+| `--provider` | Provider id from the table above. |
+| `--model` | Model ID for that provider. |
+| `--api-key` | Overrides the provider's environment variable for this run only. It stays in shell history, so prefer the environment variable. |
+| `--allow-undocumented` | Accept a confident planned change even when the docs do not name its replacement. Off by default. |
+| `--no-allow-undocumented` | Explicitly keep the default. |
+| `--docs DIR` | Folder of migration docs to index. |
+| `--max-iterations N` | Repair iterations, default 5. |
+| `--out DIR` | Output folder, default `outputs\`. |
 
-## CLI
+| Environment variable | Purpose |
+|---|---|
+| `AUTOMIGRATE_MODELS` | Comma-separated model chain override for the selected provider. |
+| `AUTOMIGRATE_ALLOW_UNDOCUMENTED` | `true` or `false`. The CLI flag takes precedence. |
+| `AUTOMIGRATE_MAX_ITERATIONS` | Repair iterations, default 5. |
+| `OPENAI_BASE_URL` | Base URL for the OpenAI-compatible endpoint. Set it to match the provider you use. |
+| `GITHUB_TOKEN` | Read access to private GitHub repositories. Never logged. |
 
-```text
-automigrate scan REPOSITORY [--dependency NAME]
-automigrate index-docs --docs DIR --dependency NAME
-automigrate migrate REPOSITORY --dependency NAME --current VER --target VER
-                      [--docs DIR] [--model MODEL] [--max-iterations 5] [--out outputs/]
-automigrate report SESSION_ID
+Run `python -m automigrate report <session-id>` to rebuild a report for any past run. Session IDs are the folder names under `outputs\`.
+
+## Demo
+
+A small public fixture that calls a function removed in numpy 2.0:
+
+```powershell
+$env:GROQ_API_KEY = "<your-key>"
+python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b --allow-undocumented
 ```
 
-Exit codes: `0` = SUCCESSFUL, `2` = any flagged or unverified status, `1` = error.
+Expected result: the detector reports `numpy.float_` as removed, the planner proposes `np.float_(x)` to `np.float64(x)`, the tests pass, and the status is `SUCCESSFUL`. The original fixture on GitHub is not changed. The edited copy is in `outputs\<session-id>\workspace`.
+
+Without `--allow-undocumented`, the same run stops with `REQUIRES_HUMAN_REVIEW` before patching. That is the default safety behaviour.
+
+## Safety
+
+- The original repository is never modified. Local input is copied; URL input is cloned into a temporary folder.
+- All paths are resolved inside the workspace. Path traversal and symlinks that point outside are rejected.
+- External processes are limited to `git`, `pip`, `pytest`, and `ruff`, with fixed argument lists, `shell=False`, and timeouts.
+- Test files are read-only to the agent. Patches touching `tests/` or `test_*.py` are rejected.
+- Patches must match exactly once. Unmatched or ambiguous patches are rejected.
+- When a run ends `REQUIRES_HUMAN_REVIEW` or `FAILED`, the workspace is reset to baseline.
+- API keys and `GITHUB_TOKEN` are read from environment variables only. They are never written to logs, the database, or reports.
+
+## Limitations
+
+- **Detection is limited to public names of installable packages.** Behaviour changes, changed defaults, configuration changes, and dynamic imports are not detected. The runtime name check catches names that exist in one version and not the other, but not changes that keep the same name.
+- **Undocumented replacements are opt-in.** With `--allow-undocumented`, the planner can apply a change its docs do not cover. The tests are the only check, so a wrong edit can pass a weak test suite. Use it only on repositories with meaningful tests.
+- **`SUCCESSFUL` requires a passing test run.** Repositories without tests are `UNVERIFIED`.
+- **Private repositories and private packages** need `GITHUB_TOKEN` for cloning, and private packages are not supported.
+- **Free model tiers are rate-limited** (HTTP 429) and sometimes unavailable (HTTP 503). A run can stop for this reason. It is reported as `FAILED` with the provider's error, which says nothing about the code.
+- **Models are not deterministic.** The same repository can produce different plans on different days.
+- **Large, multi-file migrations** may exceed what one planning step can handle.
+- **The planner can be called more than once** for the same input. This is a known issue.
+- **Retrieval is keyword-based (BM25) with a score threshold of 0.0**, so retrieved documents are not filtered by relevance. Semantic embeddings are optional and not enabled by default.
+- **Python packages only.** Non-Python or non-pip dependencies are out of scope.
+
+## Project layout
+
+- `src/automigrate/`: pipeline, API diff, usage scan, planner, patcher, LLM adapters, report writer
+- `app/ui.py`: Streamlit interface
+- `examples/rename_sample/`: small regression fixture used by the tests
+- `docs/architecture.md`: pipeline and state machine
+- `docs/real_llm.md`: provider setup
 
 ## Tests and lint
 
 ```powershell
-python -m ruff check src tests
+python -m ruff check src tests app
 python -m pytest -q
 ```
 
-Tests never make network or live model calls. They use a fake model client and a
-local API detector, both defined under `tests/`.
-
-The helper script exposes the same tasks:
-
-```powershell
-.\scripts\tasks.ps1 lint
-.\scripts\tasks.ps1 test
-.\scripts\tasks.ps1 ui
-```
-
-## Safety
-
-- The original repository is never modified. Local input is copied; URL input is
-  cloned into a temporary directory that is removed after copying.
-- Paths are resolved inside the workspace; traversal and escaping symlinks are
-  rejected.
-- External processes are limited to `pytest`, `ruff`, `git`, and `pip` with fixed
-  argument lists, `shell=False`, and a timeout.
-- Test files are read-only to the agent. Patches touching `tests/` or `test_*.py`
-  are rejected.
-- When a run ends `REQUIRES_HUMAN_REVIEW` or `FAILED`, the workspace is reset to the
-  baseline commit so no unverified patch is left behind.
-- API keys and `GITHUB_TOKEN` come from environment variables only and are never
-  written to logs, the database, or reports.
-
-## Limitations
-
-- Public PyPI packages only. `pip install --target` must be able to fetch both
-  versions; a private index or authenticated package fails with a clear error.
-- `SUCCESSFUL` requires a passing test run. Repositories without tests are reported
-  as `UNVERIFIED`.
-- Free-tier model endpoints have rate limits and may be slow or temporarily
-  unavailable; AutoMigrate falls back through the configured chain and then flags.
-- Models are not deterministic. The same repository can produce different plans;
-  the test and ruff checks are the only source of truth.
-- Python only. Static extraction and SEARCH/REPLACE patching do not cover dynamic
-  imports or generated code.
-- The API diff compares installed packages, so a version that cannot be parsed with
-  `ast` (for example a compiled-only wheel with no Python sources) stops the run
-  with an error instead of guessing.
+Tests never make network or live model calls. They use a fake model client and a local fake package.
 
 ## Documentation
 
