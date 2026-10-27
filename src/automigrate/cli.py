@@ -123,6 +123,13 @@ def migrate(
     max_iterations: int | None = typer.Option(
         None, "--max-iterations", min=1, help="Maximum repair iterations."
     ),
+    allow_undocumented: bool | None = typer.Option(
+        None,
+        "--allow-undocumented/--no-allow-undocumented",
+        help=(
+            "Accept confident plans even when the docs do not name a replacement."
+        ),
+    ),
     provider: str | None = typer.Option(
         None,
         "--provider",
@@ -145,7 +152,10 @@ def migrate(
 ) -> None:
     """Run a migration from the current version to the target version."""
     settings = settings_from_cli(
-        max_iterations=max_iterations, out=out, model=model
+        max_iterations=max_iterations,
+        allow_undocumented=allow_undocumented,
+        out=out,
+        model=model,
     )
     try:
         selected = get_provider(provider) if provider else select_default_provider()
@@ -177,6 +187,7 @@ def migrate(
             base_url=base_url,
             api_key=resolved_key,
             max_iterations=settings.max_iterations,
+            allow_undocumented=settings.allow_undocumented,
             outputs_dir=settings.outputs_dir,
             db_path=settings.db_path,
             top_k=settings.top_k,
@@ -234,12 +245,15 @@ def report(
 def settings_from_cli(
     *,
     max_iterations: int | None = None,
+    allow_undocumented: bool | None = None,
     out: Path | None = None,
     model: str | None = None,
 ) -> Settings:
     overrides: dict[str, object] = {}
     if max_iterations is not None:
         overrides["max_iterations"] = max_iterations
+    if allow_undocumented is not None:
+        overrides["allow_undocumented"] = allow_undocumented
     if out is not None:
         overrides["outputs_dir"] = out
     if model is not None:

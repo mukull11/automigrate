@@ -256,6 +256,27 @@ def test_planner_returns_insufficient_evidence_for_undocumented_replacement() ->
     assert len(llm.calls) == 2
 
 
+def test_planner_accepts_undocumented_replacement_when_allowed() -> None:
+    state = make_state(tmp_path=None)
+    state.evidence = [
+        Evidence(
+            chunk_id="c1",
+            source_doc="guide.md",
+            heading_path="Behavior changes",
+            score=1.0,
+            text="old_api behavior changed in 2.0; no documented replacement exists.",
+        )
+    ]
+    plan_text = json.dumps(make_plan(cites=["c1"]).model_dump())
+    llm = FakeLLM(plan_text=plan_text)
+
+    result = Planner(llm, allow_undocumented=True).propose(state)
+
+    assert not is_insufficient_evidence_plan(result)
+    assert result.changes[0].new_symbol == "new_api"
+    assert len(llm.calls) == 1
+
+
 def test_diagnoser_parses_result() -> None:
     state = make_state(tmp_path=None)
     llm = FakeLLM(

@@ -135,6 +135,39 @@ def test_migrate_api_key_flag_overrides_environment(tmp_path, monkeypatch) -> No
     assert captured["api_key"] == "flag-key"
 
 
+def test_migrate_forwards_allow_undocumented_flag(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-key")
+    captured: dict = {}
+
+    def fake_run_migration(*args, **kwargs):
+        captured.update(kwargs)
+        return _fake_result(tmp_path)
+
+    monkeypatch.setattr("automigrate.cli.run_migration", fake_run_migration)
+    result = runner.invoke(app, _migrate_args(tmp_path, "--allow-undocumented"))
+
+    assert result.exit_code == 0
+    assert captured["allow_undocumented"] is True
+
+
+def test_migrate_reads_allow_undocumented_from_environment(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-key")
+    monkeypatch.setenv("AUTOMIGRATE_ALLOW_UNDOCUMENTED", "true")
+    captured: dict = {}
+
+    def fake_run_migration(*args, **kwargs):
+        captured.update(kwargs)
+        return _fake_result(tmp_path)
+
+    monkeypatch.setattr("automigrate.cli.run_migration", fake_run_migration)
+    result = runner.invoke(app, _migrate_args(tmp_path))
+
+    assert result.exit_code == 0
+    assert captured["allow_undocumented"] is True
+
+
 def test_index_docs_command(tmp_path) -> None:
     docs = tmp_path / "docs"
     docs.mkdir()

@@ -107,7 +107,11 @@ def _format_results(result) -> str:
     return "\n".join(lines)
 
 
-def build_plan_prompt(state: AgentState) -> str:
+def build_plan_prompt(
+    state: AgentState,
+    *,
+    allow_undocumented: bool = False,
+) -> str:
     usage_lines = [
         f"- {usage.file}:{usage.line} {usage.kind} {usage.symbol} | {usage.snippet}"
         for usage in state.usages
@@ -136,7 +140,14 @@ def build_plan_prompt(state: AgentState) -> str:
         f"{_format_results(state.latest)}\n\n"
         "Retrieved evidence:\n"
         + ("\n\n".join(evidence_lines) or "- none")
-        + "\n\nReturn JSON with exactly these fields:\n"
+        + (
+            "\n\nUndocumented replacements are allowed for this run. If the "
+            "evidence does not name a replacement, propose the safest "
+            "well-known alternative and set confidence accordingly.\n"
+            if allow_undocumented
+            else "\n"
+        )
+        + "\nReturn JSON with exactly these fields:\n"
         '{"summary": string, "changes": [{"file": string, "old_symbol": string, '
         '"new_symbol": string or null, "description": string, "confidence": number '
         'between 0 and 1, "cites": [evidence chunk ids]}], "expected_effect": string}\n'
@@ -158,13 +169,22 @@ def parse_plan(text: str, allowed_chunk_ids: set[str]) -> Plan:
 
 
 class Planner:
-    def __init__(self, llm: LLMAdapter, *, retries: int = 1) -> None:
+    def __init__(
+        self,
+        llm: LLMAdapter,
+        *,
+        retries: int = 1,
+        allow_undocumented: bool = False,
+    ) -> None:
         self.llm = llm
         self.retries = retries
+        self.allow_undocumented = allow_undocumented
 
     def propose(self, state: AgentState) -> Plan:
         allowed = {item.chunk_id for item in state.evidence}
-        prompt = build_plan_prompt(state)
+        prompt = build_plan_prompt(
+            state, allow_undocumented=self.allow_undocumented
+        )
         feedback = ""
         last_error: Exception | None = None
         last_plan: Plan | None = None
@@ -185,6 +205,8 @@ class Planner:
                 )
                 continue
             last_plan = plan
+            if self.allow_undocumented:
+                return plan
             missing = _undocumented_changes(plan, state)
             if not missing:
                 return plan

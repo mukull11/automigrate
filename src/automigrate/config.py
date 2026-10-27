@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     top_k: int = Field(default=6, ge=1)
     score_threshold: float = 0.0
     subprocess_timeout: int = Field(default=120, ge=1)
+    allow_undocumented: bool = False
     model: str | None = None
 
 

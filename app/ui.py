@@ -217,6 +217,13 @@ def main() -> None:
     dependency = st.text_input("Dependency")
     current_version = st.text_input("Current Version")
     target_version = st.text_input("Target Version")
+    allow_undocumented = st.checkbox(
+        "Allow undocumented replacements",
+        help=(
+            "Accept confident plans even when the documentation does not name "
+            "a replacement. Defaults to off."
+        ),
+    )
     provider_id = st.selectbox(
         "Provider",
         provider_ids,
@@ -313,6 +320,7 @@ def main() -> None:
                     provider=provider.id,
                     base_url=(custom_base_url or "").strip() or None,
                     api_key=resolved_key,
+                    allow_undocumented=allow_undocumented,
                     progress_callback=progress,
                 )
         except ApiDiffError as exc:

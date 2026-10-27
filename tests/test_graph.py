@@ -16,6 +16,7 @@ def build_case(
     app_source: str,
     patch_text: str,
     extra_tests: str = "",
+    doc_text: str | None = None,
 ) -> Path:
     case = tmp_path / "case"
     repo = case / "repo"
@@ -38,7 +39,8 @@ def build_case(
 
     docs = case / "docs"
     docs.mkdir()
-    doc_text = "# Renames\n\nold_api is replaced by new_api.\n"
+    if doc_text is None:
+        doc_text = "# Renames\n\nold_api is replaced by new_api.\n"
     (docs / "guide.md").write_text(doc_text, encoding="utf-8")
     chunk_id = chunk_text(doc_text, "guide.md")[0].chunk_id
 
@@ -68,6 +70,7 @@ def run_case(
     max_iterations: int = 5,
     detector=None,
     diagnosis: str | None = None,
+    allow_undocumented: bool | None = None,
 ):
     return run_migration(
         case / "repo",
@@ -76,6 +79,7 @@ def run_case(
         "2.0",
         docs_dir=case / "docs",
         max_iterations=max_iterations,
+        allow_undocumented=allow_undocumented,
         outputs_dir=tmp_path / "outputs",
         db_path=tmp_path / "automigrate.db",
         llm_adapter=FakeLLM(
@@ -283,3 +287,24 @@ def test_flags_insufficient_evidence_without_patching(tmp_path) -> None:
     )
     assert workspace_source == source
     assert tree_checksum(repo) == before
+
+
+def test_allow_undocumented_lets_a_confident_plan_apply(tmp_path) -> None:
+    doc_text = (
+        "# Behavior change\n\n"
+        "old_api behavior changed in version 2.0. "
+        "No documented replacement exists.\n"
+    )
+    case = build_case(
+        tmp_path,
+        app_source=APP_SOURCE,
+        patch_text=APP_PATCH,
+        doc_text=doc_text,
+    )
+
+    result = run_case(case, tmp_path, allow_undocumented=True)
+
+    assert result.status.value == "SUCCESSFUL"
+    workspace = result.workspace_path
+    assert "new_api()" in (workspace / "src" / "app.py").read_text(encoding="utf-8")
+

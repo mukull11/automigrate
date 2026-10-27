@@ -25,7 +25,7 @@ from automigrate.apidiff.detector import ApiDetector, ApiDiffError, PipApiDiffDe
 from automigrate.apidiff.diff import filter_public_diff
 from automigrate.apidiff.runtime import add_removed_names
 from automigrate.apidiff.usages import collect_imported_modules, scan_api_usages
-from automigrate.config import default_outputs_dir
+from automigrate.config import default_outputs_dir, get_settings
 from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
 from automigrate.llm import RecordingLLM, create_adapter
@@ -107,11 +107,12 @@ class MigrationGraph:
         model: str | None = None,
         provider: str | None = None,
         base_url: str | None = None,
-    api_key: str | None = None,
-    max_iterations: int = 5,
-    outputs_dir: str | Path | None = None,
-    db_path: str | Path = "automigrate.db",
-    top_k: int = 6,
+        api_key: str | None = None,
+        max_iterations: int = 5,
+        allow_undocumented: bool | None = None,
+        outputs_dir: str | Path | None = None,
+        db_path: str | Path = "automigrate.db",
+        top_k: int = 6,
         score_threshold: float = 0.0,
         subprocess_timeout: int = 120,
         session_id: str | None = None,
@@ -135,6 +136,11 @@ class MigrationGraph:
         self.base_url = base_url
         self.api_key = api_key
         self.max_iterations = max_iterations
+        self.allow_undocumented = (
+            get_settings().allow_undocumented
+            if allow_undocumented is None
+            else allow_undocumented
+        )
         self.outputs_dir = (
             Path(outputs_dir).resolve()
             if outputs_dir is not None
@@ -585,7 +591,9 @@ class MigrationGraph:
         for _ in range(len(models)):
             self._record(Stage.PLAN.value, f"planning iteration {self.state.iteration}")
             try:
-                plan = Planner(self.llm).propose(self.state)
+                plan = Planner(
+                    self.llm, allow_undocumented=self.allow_undocumented
+                ).propose(self.state)
             except PlanValidationError as exc:
                 if self._advance_model():
                     continue
@@ -805,9 +813,10 @@ def run_migration(
     provider: str | None = None,
     base_url: str | None = None,
     api_key: str | None = None,
-        max_iterations: int = 5,
-        outputs_dir: str | Path | None = None,
-        db_path: str | Path = "automigrate.db",
+    max_iterations: int = 5,
+    allow_undocumented: bool | None = None,
+    outputs_dir: str | Path | None = None,
+    db_path: str | Path = "automigrate.db",
     top_k: int = 6,
     score_threshold: float = 0.0,
     subprocess_timeout: int = 120,
@@ -827,6 +836,7 @@ def run_migration(
         base_url=base_url,
         api_key=api_key,
         max_iterations=max_iterations,
+        allow_undocumented=allow_undocumented,
         outputs_dir=outputs_dir,
         db_path=db_path,
         top_k=top_k,
