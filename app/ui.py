@@ -6,7 +6,6 @@ This module contains presentation only. Every migration is performed by
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import streamlit as st
@@ -29,8 +28,13 @@ from automigrate.activity import (
 )
 from automigrate.apidiff.detector import ApiDiffError
 from automigrate.graph import MigrationResult, run_migration
-from automigrate.llm.chain import available_models
-from automigrate.llm.keys import MissingKeyError, resolve_api_key
+from automigrate.llm.keys import (
+    MissingKeyError,
+    provider_key_from_env,
+    resolve_api_key,
+)
+from automigrate.llm.models import list_models
+from automigrate.llm.providers import Provider, all_providers, get_provider
 from automigrate.tools.git import GitRepo
 
 _API_KEY_STATE = "_automigrate_api_key"
@@ -171,33 +175,92 @@ def _clear_api_key() -> None:
     st.session_state.pop(_API_KEY_STATE, None)
 
 
+def _provider_label(provider: Provider) -> str:
+    return f"{provider.display_name} ({provider.id})"
+
+
+def _model_cache_key(provider_id: str) -> str:
+    return f"_automigrate_models_{provider_id}"
+
+
+def _load_models(provider: Provider, key: str | None, *, refresh: bool = False):
+    cache_key = _model_cache_key(provider.id)
+    if refresh:
+        st.session_state.pop(cache_key, None)
+    cached = st.session_state.get(cache_key)
+    if cached is None:
+        listing = list_models(
+            provider,
+            key or provider_key_from_env(provider),
+            base_url=provider.base_url,
+        )
+        st.session_state[cache_key] = listing
+        cached = listing
+    return cached
+
+
+_CUSTOM_MODEL = "__automigrate_custom_model__"
+
+
 def main() -> None:
     st.set_page_config(page_title="AUTO-MIGRATE", layout="wide")
     st.title("AUTO-MIGRATE")
     st.markdown("### Agentic AI Dependency Migration")
 
-    models = available_models()
-    with st.form("migration"):
-        repository = st.text_input(
-            "Repository",
-            placeholder="C:\\path\\to\\repo or https://github.com/org/repo",
+    providers = all_providers()
+    provider_ids = [provider.id for provider in providers]
+
+    repository = st.text_input(
+        "Repository",
+        placeholder="C:\\path\\to\\repo or https://github.com/org/repo",
+    )
+    dependency = st.text_input("Dependency")
+    current_version = st.text_input("Current Version")
+    target_version = st.text_input("Target Version")
+    provider_id = st.selectbox(
+        "Provider",
+        provider_ids,
+        format_func=lambda value: _provider_label(get_provider(value)),
+    )
+    provider = get_provider(provider_id)
+
+    listing = _load_models(provider, provider_key_from_env(provider))
+
+    model_options = [*listing.models, _CUSTOM_MODEL]
+    model = st.selectbox(
+        "Model",
+        model_options,
+        format_func=lambda value: (
+            "Type a model ID" if value == _CUSTOM_MODEL else value
+        ),
+    )
+    if model == _CUSTOM_MODEL:
+        model = st.text_input("Model ID")
+    if listing.error:
+        st.caption(f"Using fallback model list: {listing.error}")
+    custom_base_url = None
+    if provider.id == "custom":
+        custom_base_url = st.text_input(
+            "Base URL",
+            placeholder="https://your-endpoint.example/v1",
         )
-        dependency = st.text_input("Dependency")
-        current_version = st.text_input("Current Version")
-        target_version = st.text_input("Target Version")
-        model = st.selectbox("Model", models)
-        api_key_field = st.text_input(
-            "API key",
-            type="password",
-            key=_API_KEY_STATE,
-        )
-        if not (api_key_field or "").strip() and (
-            os.environ.get("OPENAI_API_KEY") or ""
-        ).strip():
-            st.caption("Using OPENAI_API_KEY from environment")
-        submitted = st.form_submit_button("START MIGRATION")
+
+    api_key_field = st.text_input(
+        "API key",
+        type="password",
+        key=_API_KEY_STATE,
+    )
+    effective_key = (api_key_field or "").strip() or provider_key_from_env(provider)
+    if not (api_key_field or "").strip() and provider_key_from_env(provider):
+        st.caption(f"Using {provider.key_env} from environment")
 
     st.button("Clear key", on_click=_clear_api_key)
+    if st.button("Refresh model list"):
+        _load_models(provider, effective_key, refresh=True)
+        rerun = getattr(st, "rerun", None)
+        if callable(rerun):
+            rerun()
+    submitted = st.button("START MIGRATION")
 
     stored_result = st.session_state.get("migration_result")
     activity = st.session_state.get("activity") or _new_activity()
@@ -222,8 +285,11 @@ def main() -> None:
                 "Dependency, Current Version, and Target Version are required."
             )
             return
+        if not (model or "").strip():
+            st.error("Choose a model or type a model ID.")
+            return
         try:
-            resolved_key = resolve_api_key(api_key_field)
+            resolved_key = resolve_api_key(provider, api_key_field)
         except MissingKeyError as exc:
             st.error(str(exc))
             return
@@ -243,7 +309,9 @@ def main() -> None:
                     dependency.strip(),
                     current_version.strip(),
                     target_version.strip(),
-                    model=model,
+                    model=model.strip(),
+                    provider=provider.id,
+                    base_url=(custom_base_url or "").strip() or None,
                     api_key=resolved_key,
                     progress_callback=progress,
                 )

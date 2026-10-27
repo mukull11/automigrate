@@ -83,6 +83,7 @@ class MigrationGraph:
         docs_dir: str | Path | None = None,
         model: str | None = None,
         provider: str | None = None,
+        base_url: str | None = None,
         api_key: str | None = None,
         max_iterations: int = 5,
         outputs_dir: str | Path = "outputs",
@@ -108,6 +109,7 @@ class MigrationGraph:
         self.docs_dir = Path(docs_dir).resolve() if docs_dir else None
         self.model = model
         self.provider = provider
+        self.base_url = base_url
         self.api_key = api_key
         self.max_iterations = max_iterations
         self.outputs_dir = Path(outputs_dir).resolve()
@@ -356,7 +358,7 @@ class MigrationGraph:
 
         selected = get_provider(self.provider)
         key = resolve_api_key(selected, self.api_key)
-        base_url = selected.base_url
+        base_url = self.base_url or selected.base_url
         listing = list_models(selected, key, base_url=base_url)
         models = list(listing.models)
         requested = (self.model or "").strip()
@@ -726,6 +728,7 @@ def run_migration(
     docs_dir: str | Path | None = None,
     model: str | None = None,
     provider: str | None = None,
+    base_url: str | None = None,
     api_key: str | None = None,
     max_iterations: int = 5,
     outputs_dir: str | Path = "outputs",
@@ -746,6 +749,7 @@ def run_migration(
         docs_dir=docs_dir,
         model=model,
         provider=provider,
+        base_url=base_url,
         api_key=api_key,
         max_iterations=max_iterations,
         outputs_dir=outputs_dir,
