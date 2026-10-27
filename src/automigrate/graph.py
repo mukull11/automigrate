@@ -22,7 +22,8 @@ from automigrate.agent.planner import (
     is_insufficient_evidence_plan,
 )
 from automigrate.apidiff.detector import ApiDetector, ApiDiffError, PipApiDiffDetector
-from automigrate.apidiff.usages import scan_api_usages
+from automigrate.apidiff.diff import filter_public_diff
+from automigrate.apidiff.usages import collect_imported_modules, scan_api_usages
 from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
 from automigrate.llm import RecordingLLM, create_adapter
@@ -433,6 +434,9 @@ class MigrationGraph:
         bundle = self.api_detector.detect(
             self.dependency, self.from_version, self.to_version, self.workspace
         )
+        bundle.diff = filter_public_diff(
+            bundle.diff, collect_imported_modules(self.workspace)
+        )
         self.state.api_diff = bundle.diff
         if bundle.documents:
             index_text_documents(
@@ -456,6 +460,13 @@ class MigrationGraph:
             f"found {len(self.state.usages)} usages of {self.dependency} "
             f"and {len(self.state.api_usages)} uses of changed symbols",
         )
+        if (
+            self.state.api_diff is not None
+            and self.state.api_diff.has_changes
+            and not self.state.api_usages
+        ):
+            self._flag("no usages of changed API found in repository")
+            return False
         if not self.state.usages and not self.state.api_usages:
             self._flag(f"no usages of {self.dependency} found")
             return False

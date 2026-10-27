@@ -16,6 +16,73 @@ from automigrate.apidiff.models import (
 RENAME_SIMILARITY = 0.5
 
 
+def _is_public_symbol(symbol: ApiSymbol) -> bool:
+    if symbol.name.startswith("_"):
+        return False
+    module = symbol.module or ""
+    return all(
+        not part.startswith("_") for part in module.split(".") if part
+    )
+
+
+def _module_is_used(module: str, imported_modules: set[str]) -> bool:
+    if not module or "." not in module:
+        return True
+    for imported in imported_modules:
+        if imported == module or imported.startswith(f"{module}."):
+            return True
+    return False
+
+
+def filter_public_diff(
+    diff: ApiDiff, imported_modules: set[str] | None = None
+) -> ApiDiff:
+    """Drop private names and submodules the repository never imports.
+
+    The old side of a rename/move/parameter change decides whether the change
+    is relevant; this keeps the replacement symbol available to the planner.
+    """
+
+    def keeps(symbol: ApiSymbol) -> bool:
+        if not _is_public_symbol(symbol):
+            return False
+        if imported_modules is None:
+            return True
+        return _module_is_used(symbol.module, imported_modules)
+
+    updates = {
+        "removed": [item for item in diff.removed if keeps(item)],
+        "added": [item for item in diff.added if keeps(item)],
+        "renamed": [
+            change for change in diff.renamed if keeps(change.old)
+        ],
+        "moved": [change for change in diff.moved if keeps(change.old)],
+        "changed_parameters": [
+            change
+            for change in diff.changed_parameters
+            if keeps(change.symbol)
+        ],
+    }
+    kept_moves = updates["moved"]
+    grouped: dict[tuple[str, str], list[str]] = {}
+    for change in kept_moves:
+        grouped.setdefault(
+            (change.old.module, change.new.module), []
+        ).append(change.old.name)
+    updates["moved_modules"] = [
+        ModuleMove(
+            old_module=old_module,
+            new_module=new_module,
+            reason=(
+                f"module {old_module} moved to {new_module} "
+                f"({', '.join(sorted(names))})"
+            ),
+        )
+        for (old_module, new_module), names in grouped.items()
+    ]
+    return diff.model_copy(update=updates)
+
+
 def _ratio(left: str, right: str) -> float:
     return SequenceMatcher(None, left, right).ratio()
 
@@ -31,6 +98,7 @@ def diff_apis(
     dependency: str = "",
     current_version: str = "",
     target_version: str = "",
+    imported_modules: set[str] | None = None,
 ) -> ApiDiff:
     """Compare two symbol sets and classify every difference deterministically."""
 
@@ -62,7 +130,7 @@ def diff_apis(
 
     moved_modules = _module_moves(moved)
 
-    return ApiDiff(
+    result = ApiDiff(
         dependency=dependency,
         current_version=current_version,
         target_version=target_version,
@@ -75,6 +143,7 @@ def diff_apis(
         moved=sorted(moved, key=lambda change: change.old.qualified_name),
         moved_modules=moved_modules,
     )
+    return filter_public_diff(result, imported_modules)
 
 
 def _pair_moved(

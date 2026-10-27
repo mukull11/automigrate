@@ -143,3 +143,25 @@ def scan_api_usages(root: str | Path, diff: ApiDiff) -> list[Usage]:
         collector.visit(tree)
         usages.extend(collector.usages())
     return usages
+
+
+def collect_imported_modules(root: str | Path) -> set[str]:
+    """Return every module name imported by the repository's Python files."""
+
+    root_path = Path(root)
+    modules: set[str] = set()
+    for path in find_python_files(root_path):
+        try:
+            tree = ast.parse(
+                path.read_text(encoding="utf-8", errors="replace")
+            )
+        except (OSError, SyntaxError):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    modules.add(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    modules.add(node.module)
+    return modules
