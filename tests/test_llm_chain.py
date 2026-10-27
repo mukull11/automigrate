@@ -1,7 +1,11 @@
+from types import SimpleNamespace
+
 import pytest
 
+from automigrate.llm import create_adapter
 from automigrate.llm.base import LLMAdapter, LLMError
 from automigrate.llm.chain import DEFAULT_MODELS, ModelChainLLM, build_model_chain
+from automigrate.llm.openai import OpenAILLM
 
 
 class StubAdapter(LLMAdapter):
@@ -67,3 +71,65 @@ def test_chain_raises_after_last_model() -> None:
     chain = ModelChainLLM(["one"], factory=lambda model: adapters[model])
     with pytest.raises(LLMError):
         chain.complete("hi")
+
+
+class FakeHTTPError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+
+
+class FakeCompletions:
+    def __init__(self, client: "FakeClient") -> None:
+        self.client = client
+
+    def create(self, **kwargs):
+        self.client.calls.append(kwargs["model"])
+        if self.client.status_code != 200:
+            raise FakeHTTPError(self.client.status_code)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content=f"answer from {kwargs['model']}")
+                )
+            ]
+        )
+
+
+class FakeClient:
+    def __init__(self, status_code: int = 200) -> None:
+        self.status_code = status_code
+        self.calls: list[str] = []
+        self.chat = SimpleNamespace(completions=FakeCompletions(self))
+
+
+@pytest.mark.parametrize("status_code", [404, 429])
+def test_chain_falls_back_when_first_model_returns_http_error(status_code) -> None:
+    clients = {"one": FakeClient(status_code), "two": FakeClient()}
+    chain = ModelChainLLM(
+        ["one", "two"],
+        factory=lambda model: OpenAILLM(model=model, client=clients[model]),
+    )
+
+    assert chain.complete("hi", stage="PLAN") == "answer from two"
+    assert clients["one"].calls == ["one"]
+    assert clients["two"].calls == ["two"]
+    assert chain.current_model == "two"
+
+
+def test_openai_error_keeps_the_http_status_code() -> None:
+    llm = OpenAILLM(model="one", client=FakeClient(404))
+
+    with pytest.raises(LLMError) as exc_info:
+        llm.complete("hi", stage="PLAN")
+
+    assert exc_info.value.status_code == 404
+
+
+def test_create_adapter_uses_the_shared_model_chain(monkeypatch) -> None:
+    monkeypatch.setenv("AUTOMIGRATE_MODELS", "one,two")
+
+    adapter = create_adapter("two", api_key="test-key")
+
+    assert isinstance(adapter, ModelChainLLM)
+    assert adapter.model_names == ["two", "one"]

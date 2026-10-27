@@ -42,8 +42,23 @@ _STAGE_INDEX = {
 }
 
 
+_TERMINAL_STAGES = {"REPORT", "DONE", "FLAGGED"}
+_COMPLETED_STATUSES = {"SUCCESSFUL", "UNVERIFIED"}
+
+
 def _new_activity() -> dict[str, Any]:
-    return {"done": set(), "current": None}
+    return {"done": set(), "current": None, "error": None}
+
+
+def _mark_complete(activity: dict[str, Any]) -> None:
+    activity["done"] = set(range(len(STAGE_LABELS)))
+    activity["current"] = len(STAGE_LABELS) - 1
+    activity["error"] = None
+
+
+def _report_reason(message: str) -> str:
+    _, _, reason = message.partition(":")
+    return reason.strip() or message
 
 
 def _advance_activity(
@@ -51,31 +66,62 @@ def _advance_activity(
 ) -> None:
     if message.startswith("baseline:") or message == "cloning repository":
         return
-    index = _STAGE_INDEX.get(stage.upper())
+    name = stage.upper()
+    index = _STAGE_INDEX.get(name)
     if index is None:
+        return
+    if name in _TERMINAL_STAGES:
+        status = message.removeprefix("final status ").split(":", 1)[0].strip()
+        if status in _COMPLETED_STATUSES:
+            _mark_complete(activity)
+            return
+        failing = activity["current"] if activity["current"] is not None else index
+        activity["done"] = {item for item in activity["done"] if item < failing}
+        activity["done"].update(range(failing))
+        activity["current"] = failing
+        activity["error"] = {"stage": failing, "message": _report_reason(message)}
         return
     activity["done"] = {item for item in activity["done"] if item < index}
     activity["done"].update(range(index))
     activity["current"] = index
+    activity["error"] = None
 
 
-def _finish_activity(activity: dict[str, Any]) -> None:
-    activity["done"] = set(range(len(STAGE_LABELS)))
-    activity["current"] = len(STAGE_LABELS) - 1
+def _fail_activity(activity: dict[str, Any], message: str) -> None:
+    failing = activity["current"] if activity["current"] is not None else 0
+    activity["done"] = {item for item in activity["done"] if item < failing}
+    activity["done"].update(range(failing))
+    activity["current"] = failing
+    activity["error"] = {"stage": failing, "message": message}
+
+
+def _finish_activity(
+    activity: dict[str, Any], final_status: str | None = None
+) -> None:
+    if final_status in _COMPLETED_STATUSES:
+        _mark_complete(activity)
+    elif activity["error"] is None:
+        _fail_activity(activity, final_status or "migration did not complete")
 
 
 def _activity_markdown(
     activity: dict[str, Any], final_status: str | None = None
 ) -> str:
     lines = ["#### Agent Activity", ""]
+    error = activity["error"] or {}
+    error_stage = error.get("stage")
     for index, label in enumerate(STAGE_LABELS):
-        if final_status is not None or index in activity["done"]:
+        if index == error_stage:
+            mark = "\u2717"
+        elif index in activity["done"]:
             mark = "\u2713"
         elif index == activity["current"]:
             mark = "\u2192"
         else:
             mark = "\u25cb"
         lines.append(f"{mark} {label}")
+        if index == error_stage and error.get("message"):
+            lines.append(f"    {error['message']}")
     if final_status is not None:
         lines.extend(["", f"**Final status: {final_status}**"])
     return "\n\n".join(lines)
@@ -291,15 +337,17 @@ def main() -> None:
                     progress_callback=progress,
                 )
         except ApiDiffError as exc:
+            _fail_activity(activity, f"API diff failed: {exc}")
             _render_activity(activity_slot, activity)
             st.error(f"API diff failed: {exc}")
             return
         except Exception as exc:  # noqa: BLE001 - show any failure in the UI
+            _fail_activity(activity, f"Migration failed: {exc}")
             _render_activity(activity_slot, activity)
             st.error(f"Migration failed: {exc}")
             return
 
-        _finish_activity(activity)
+        _finish_activity(activity, result.state.status.value)
         st.session_state["activity"] = activity
         st.session_state["migration_result"] = result
         _render_activity(activity_slot, activity, result.state.status.value)

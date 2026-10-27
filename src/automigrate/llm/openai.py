@@ -9,6 +9,7 @@ from automigrate.llm.base import (
     LLMAdapter,
     LLMConfigurationError,
     LLMError,
+    http_status_code,
     resolve_model,
 )
 
@@ -70,5 +71,7 @@ class OpenAILLM(LLMAdapter):
                 temperature=0,
             )
         except Exception as exc:
-            raise LLMError(f"OpenAI request failed: {exc}") from exc
+            raise LLMError(
+                f"OpenAI request failed: {exc}", status_code=http_status_code(exc)
+            ) from exc
         return (response.choices[0].message.content or "").strip()

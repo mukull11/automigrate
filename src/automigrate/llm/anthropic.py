@@ -8,6 +8,7 @@ from automigrate.llm.base import (
     LLMAdapter,
     LLMConfigurationError,
     LLMError,
+    http_status_code,
     resolve_model,
 )
 
@@ -49,6 +50,9 @@ class AnthropicLLM(LLMAdapter):
                 messages=[{"role": "user", "content": prompt}],
             )
         except Exception as exc:
-            raise LLMError(f"Anthropic request failed: {exc}") from exc
+            raise LLMError(
+                f"Anthropic request failed: {exc}",
+                status_code=http_status_code(exc),
+            ) from exc
         parts = [block.text for block in message.content if getattr(block, "text", None)]
         return "\n".join(parts).strip()

@@ -7,11 +7,25 @@ from abc import ABC, abstractmethod
 
 
 class LLMError(RuntimeError):
-    pass
+    def __init__(self, message: str = "", *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class LLMConfigurationError(LLMError):
     pass
+
+
+def http_status_code(exc: BaseException) -> int | None:
+    """Extract an HTTP status code from a provider SDK exception, if present."""
+
+    for attribute in ("status_code", "http_status", "code"):
+        value = getattr(exc, attribute, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) else None
 
 
 def resolve_model(
