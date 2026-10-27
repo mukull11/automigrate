@@ -214,6 +214,10 @@ class MigrationGraph:
 
     def _finish(self, final_status: Status, reason: str | None = None) -> None:
         assert self.state is not None
+        if final_status == Status.SUCCESSFUL and not self.state.has_tests:
+            final_status = Status.UNVERIFIED
+            if not reason or "no tests found" not in reason:
+                reason = "no tests found" + (f": {reason}" if reason else "")
         if (
             final_status in {Status.REQUIRES_HUMAN_REVIEW, Status.FAILED}
             and self.repo is not None
@@ -460,15 +464,9 @@ class MigrationGraph:
             f"found {len(self.state.usages)} usages of {self.dependency} "
             f"and {len(self.state.api_usages)} uses of changed symbols",
         )
-        if (
-            self.state.api_diff is not None
-            and self.state.api_diff.has_changes
-            and not self.state.api_usages
-        ):
+        if not self.state.api_usages:
+            self.state.diagnosis = Diagnosis.INSUFFICIENT_EVIDENCE
             self._flag("no usages of changed API found in repository")
-            return False
-        if not self.state.usages and not self.state.api_usages:
-            self._flag(f"no usages of {self.dependency} found")
             return False
         return True
 
@@ -640,12 +638,12 @@ class MigrationGraph:
         if failures:
             self._finish(
                 Status.UNVERIFIED,
-                "no tests were found; import check failed: " + "; ".join(failures[:3]),
+                "no tests found; import check failed: " + "; ".join(failures[:3]),
             )
             return
         self._finish(
             Status.UNVERIFIED,
-            "no tests were found; validated with ruff and an import check only",
+            "no tests found; validated with ruff and an import check only",
         )
 
     def _loop(self) -> None:
