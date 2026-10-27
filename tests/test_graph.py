@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+from fake_llm import FakeLLM, StaticApiDetector, rename_detector
+
 from automigrate import db
+from automigrate.apidiff.models import ApiDiff
 from automigrate.graph import run_migration
 from automigrate.rag.chunker import chunk_text
 from automigrate.tools.git import GitRepo, tree_checksum
@@ -13,7 +16,6 @@ def build_case(
     app_source: str,
     patch_text: str,
     extra_tests: str = "",
-    expected_diagnosis: str = "MIGRATION_RELATED",
 ) -> Path:
     case = tmp_path / "case"
     repo = case / "repo"
@@ -56,11 +58,33 @@ def build_case(
     }
     (case / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
     (case / "patch.txt").write_text(patch_text, encoding="utf-8")
-    (case / "case.yaml").write_text(
-        f"dependency: lib\nexpected_diagnosis: {expected_diagnosis}\n",
-        encoding="utf-8",
-    )
     return case
+
+
+def run_case(
+    case: Path,
+    tmp_path: Path,
+    *,
+    max_iterations: int = 5,
+    detector=None,
+    diagnosis: str | None = None,
+):
+    return run_migration(
+        case / "repo",
+        "lib",
+        "1.0",
+        "2.0",
+        docs_dir=case / "docs",
+        max_iterations=max_iterations,
+        outputs_dir=tmp_path / "outputs",
+        db_path=tmp_path / "automigrate.db",
+        llm_adapter=FakeLLM(
+            plan_text=(case / "plan.json").read_text(encoding="utf-8"),
+            patch_text=(case / "patch.txt").read_text(encoding="utf-8"),
+            diagnosis_text=diagnosis,
+        ),
+        api_detector=detector or rename_detector(),
+    )
 
 
 APP_SOURCE = (
@@ -92,16 +116,7 @@ def test_migrate_case_succeeds_and_commits_per_iteration(tmp_path) -> None:
     case = build_case(tmp_path, app_source=APP_SOURCE, patch_text=APP_PATCH)
     repo = case / "repo"
     before = tree_checksum(repo)
-    result = run_migration(
-        repo,
-        "lib",
-        "1.0",
-        "2.0",
-        docs_dir=case / "docs",
-        llm="mock",
-        outputs_dir=tmp_path / "outputs",
-        db_path=tmp_path / "automigrate.db",
-    )
+    result = run_case(case, tmp_path)
 
     assert result.status.value == "SUCCESSFUL"
     assert result.state.latest.failed == 0
@@ -126,7 +141,6 @@ def test_migrate_case_succeeds_and_commits_per_iteration(tmp_path) -> None:
 
 
 def test_rollback_when_pass_count_drops(tmp_path) -> None:
-    extra_tests = ""
     broken_patch = (
         "FILE: src/app.py\n"
         "<<<<<<< SEARCH\n"
@@ -143,12 +157,7 @@ def test_rollback_when_pass_count_drops(tmp_path) -> None:
         "    return new_api()\n"
         ">>>>>>> REPLACE\n"
     )
-    case = build_case(
-        tmp_path,
-        app_source=APP_SOURCE,
-        patch_text=broken_patch,
-        extra_tests=extra_tests,
-    )
+    case = build_case(tmp_path, app_source=APP_SOURCE, patch_text=broken_patch)
     (case / "repo" / "tests" / "test_api.py").write_text(
         "from pathlib import Path\n"
         "\n"
@@ -166,16 +175,7 @@ def test_rollback_when_pass_count_drops(tmp_path) -> None:
         "    assert 'old_api()' in _source()\n",
         encoding="utf-8",
     )
-    result = run_migration(
-        case / "repo",
-        "lib",
-        "1.0",
-        "2.0",
-        docs_dir=case / "docs",
-        llm="mock",
-        outputs_dir=tmp_path / "outputs",
-        db_path=tmp_path / "automigrate.db",
-    )
+    result = run_case(case, tmp_path)
     assert result.status.value == "REQUIRES_HUMAN_REVIEW"
     assert "dropped" in (result.state.flag_reason or "")
     workspace = result.workspace_path
@@ -201,17 +201,7 @@ def test_max_iterations_is_enforced(tmp_path) -> None:
         ">>>>>>> REPLACE\n"
     )
     case = build_case(tmp_path, app_source=APP_SOURCE, patch_text=noop_patch)
-    result = run_migration(
-        case / "repo",
-        "lib",
-        "1.0",
-        "2.0",
-        docs_dir=case / "docs",
-        llm="mock",
-        max_iterations=2,
-        outputs_dir=tmp_path / "outputs",
-        db_path=tmp_path / "automigrate.db",
-    )
+    result = run_case(case, tmp_path, max_iterations=2)
     assert result.status.value == "REQUIRES_HUMAN_REVIEW"
     assert "maximum iterations" in (result.state.flag_reason or "")
     assert len(result.commits) == 2
@@ -276,9 +266,13 @@ def test_flags_insufficient_evidence_without_patching(tmp_path) -> None:
         "1.0",
         "2.0",
         docs_dir=docs,
-        llm="mock",
         outputs_dir=tmp_path / "outputs",
         db_path=tmp_path / "automigrate.db",
+        llm_adapter=FakeLLM(
+            plan_text=(case / "plan.json").read_text(encoding="utf-8"),
+            patch_text=(case / "patch.txt").read_text(encoding="utf-8"),
+        ),
+        api_detector=StaticApiDetector(ApiDiff()),
     )
 
     assert result.status.value == "REQUIRES_HUMAN_REVIEW"

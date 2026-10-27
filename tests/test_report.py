@@ -1,12 +1,13 @@
 from pathlib import Path
 
+from fake_llm import FakeLLM, rename_detector
 from typer.testing import CliRunner
 
 from automigrate.cli import app
 from automigrate.graph import run_migration
 
 ROOT = Path(__file__).resolve().parents[1]
-CASE = ROOT / "benchmarks" / "cases" / "01_rename"
+CASE = ROOT / "tests" / "fixtures" / "rename_sample"
 
 
 def test_report_command_rerenders_status_and_diff(tmp_path) -> None:
@@ -16,9 +17,13 @@ def test_report_command_rerenders_status_and_diff(tmp_path) -> None:
         "1.x",
         "2.x",
         docs_dir=CASE / "docs",
-        llm="mock",
         outputs_dir=tmp_path / "outputs",
         db_path=tmp_path / "automigrate.db",
+        llm_adapter=FakeLLM(
+            plan_text=(CASE / "plan.json").read_text(encoding="utf-8"),
+            patch_text=(CASE / "patch.txt").read_text(encoding="utf-8"),
+        ),
+        api_detector=rename_detector(),
     )
     assert result.status.value == "SUCCESSFUL"
 

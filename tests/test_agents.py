@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from fake_llm import FakeLLM
 
 from automigrate.agent.diagnoser import Diagnoser, DiagnosisError, parse_diagnosis
 from automigrate.agent.patcher import Patcher, PatchError, parse_patch
@@ -12,7 +13,6 @@ from automigrate.agent.planner import (
     parse_plan,
 )
 from automigrate.llm.base import LLMAdapter
-from automigrate.llm.mock import MockLLM
 from automigrate.state import (
     AgentState,
     Evidence,
@@ -108,7 +108,7 @@ def test_patcher_applies_multiple_blocks(tmp_path) -> None:
         "FILE: b.py\n<<<<<<< SEARCH\ncall old_api()\n=======\ncall new_api()\n"
         ">>>>>>> REPLACE\n"
     )
-    result = Patcher(MockLLM(patch_text=patch)).apply(
+    result = Patcher(FakeLLM(patch_text=patch)).apply(
         make_state(tmp_path), make_plan(), sandbox
     )
     assert result.blocks_applied == 2
@@ -123,7 +123,7 @@ def test_patcher_rejects_no_match_and_leaves_file_unchanged(tmp_path) -> None:
     patch = (
         "FILE: src/app.py\n<<<<<<< SEARCH\nmissing()\n=======\nnew()\n>>>>>>> REPLACE\n"
     )
-    llm = MockLLM(patch_text=patch)
+    llm = FakeLLM(patch_text=patch)
     with pytest.raises(PatchError):
         Patcher(llm).apply(make_state(tmp_path), make_plan(), sandbox)
     assert sandbox.read_text("src/app.py") == "old_api()\n"
@@ -138,7 +138,7 @@ def test_patcher_rejects_multi_match(tmp_path) -> None:
         ">>>>>>> REPLACE\n"
     )
     with pytest.raises(PatchError, match="matched 2 times"):
-        Patcher(MockLLM(patch_text=patch)).apply(
+        Patcher(FakeLLM(patch_text=patch)).apply(
             make_state(tmp_path), make_plan(), sandbox
         )
     assert sandbox.read_text("src/app.py") == "old_api()\nold_api()\n"
@@ -153,7 +153,7 @@ def test_patcher_is_atomic_across_blocks(tmp_path) -> None:
         "FILE: b.py\n<<<<<<< SEARCH\nmissing\n=======\nnew\n>>>>>>> REPLACE\n"
     )
     with pytest.raises(PatchError):
-        Patcher(MockLLM(patch_text=patch)).apply(
+        Patcher(FakeLLM(patch_text=patch)).apply(
             make_state(tmp_path), make_plan(), sandbox
         )
     assert sandbox.read_text("a.py") == "old()\n"
@@ -169,7 +169,7 @@ def test_patcher_rejects_test_file_edits(tmp_path) -> None:
         ">>>>>>> REPLACE\n"
     )
     with pytest.raises(PatchError, match="test file"):
-        Patcher(MockLLM(patch_text=patch)).apply(
+        Patcher(FakeLLM(patch_text=patch)).apply(
             make_state(tmp_path), make_plan(file="tests/test_app.py"), sandbox
         )
     assert (tmp_path / "tests" / "test_app.py").read_text(encoding="utf-8") == "assert False\n"
@@ -194,7 +194,7 @@ def test_planner_parses_plan_and_citations() -> None:
         )
     ]
     plan_text = json.dumps(make_plan().model_dump())
-    plan = Planner(MockLLM(plan_text=plan_text)).propose(state)
+    plan = Planner(FakeLLM(plan_text=plan_text)).propose(state)
     assert plan.changes[0].new_symbol == "new_api"
     assert parse_plan("```json\n" + plan_text + "\n```", {"c1"}).summary
 
@@ -211,7 +211,7 @@ def test_planner_rejects_unknown_citations_after_retry() -> None:
         )
     ]
     bad = json.dumps(make_plan(cites=["unknown"]).model_dump())
-    llm = MockLLM(plan_text=bad)
+    llm = FakeLLM(plan_text=bad)
     with pytest.raises(PlanValidationError):
         Planner(llm).propose(state)
     assert len(llm.calls) == 2
@@ -246,7 +246,7 @@ def test_planner_returns_insufficient_evidence_for_undocumented_replacement() ->
         )
     ]
     plan_text = json.dumps(make_plan(cites=["c1"]).model_dump())
-    llm = MockLLM(plan_text=plan_text)
+    llm = FakeLLM(plan_text=plan_text)
 
     result = Planner(llm).propose(state)
 
@@ -258,7 +258,7 @@ def test_planner_returns_insufficient_evidence_for_undocumented_replacement() ->
 
 def test_diagnoser_parses_result() -> None:
     state = make_state(tmp_path=None)
-    llm = MockLLM(
+    llm = FakeLLM(
         diagnosis_text=json.dumps(
             {"diagnosis": "MIGRATION_RELATED", "reason": "signature changed"}
         )
