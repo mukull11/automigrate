@@ -8,7 +8,7 @@ runner = CliRunner()
 def test_help_lists_commands() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    for command in ("scan", "index-docs", "migrate", "report", "eval"):
+    for command in ("scan", "index-docs", "migrate", "report"):
         assert command in result.stdout
 
 
@@ -42,6 +42,34 @@ def test_scan_unknown_dependency_exits_two(tmp_path) -> None:
     (repo / "requirements.txt").write_text("lib==1.0\n", encoding="utf-8")
     result = runner.invoke(app, ["scan", str(repo), "--dependency", "other"])
     assert result.exit_code == 2
+
+
+def test_migrate_without_api_key_exits_with_clear_message(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "requirements.txt").write_text("lib==1.0.0\n", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "migrate",
+            str(repo),
+            "--dependency",
+            "lib",
+            "--current",
+            "1.0.0",
+            "--target",
+            "2.0.0",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "OPENAI_API_KEY" in result.output
+    assert "docs/real_llm.md" in result.output
+
+
+def test_migrate_rejects_removed_mock_option(tmp_path) -> None:
+    result = runner.invoke(app, ["migrate", str(tmp_path), "--llm", "mock"])
+    assert result.exit_code != 0
 
 
 def test_index_docs_command(tmp_path) -> None:

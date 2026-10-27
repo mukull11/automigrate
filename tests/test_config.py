@@ -9,15 +9,15 @@ def test_defaults() -> None:
     assert settings.max_iterations == 5
     assert settings.top_k == 6
     assert settings.subprocess_timeout == 120
-    assert settings.llm_provider == "mock"
+    assert settings.model is None
 
 
 def test_env_override(monkeypatch) -> None:
     monkeypatch.setenv("AUTOMIGRATE_MAX_ITERATIONS", "3")
-    monkeypatch.setenv("AUTOMIGRATE_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("AUTOMIGRATE_MODEL", "gemini-2.5-flash")
     settings = Settings(_env_file=None)
     assert settings.max_iterations == 3
-    assert settings.llm_provider == "openai"
+    assert settings.model == "gemini-2.5-flash"
 
 
 def test_get_settings_overrides() -> None:

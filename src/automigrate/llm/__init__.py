@@ -1,38 +1,46 @@
-"""LLM adapters and adapter factory."""
+"""LLM adapters and the live model-chain factory."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
 
-from automigrate.llm.anthropic import AnthropicLLM
 from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
-from automigrate.llm.mock import MockLLM
+from automigrate.llm.chain import (
+    DEFAULT_MODELS,
+    ModelChainLLM,
+    available_models,
+    build_model_chain,
+)
 from automigrate.llm.openai import OpenAILLM
 from automigrate.llm.recording import RecordingLLM
 
+API_KEY_MESSAGE = (
+    "OPENAI_API_KEY is not set. AutoMigrate only runs live models; set "
+    "OPENAI_API_KEY (and optional OPENAI_BASE_URL) and see docs/real_llm.md."
+)
 
-def create_adapter(
-    name: str,
-    *,
-    case_dir: str | Path | None = None,
-) -> LLMAdapter:
-    normalized = name.strip().lower()
-    if normalized == "mock":
-        return MockLLM(case_dir)
-    if normalized == "anthropic":
-        return AnthropicLLM()
-    if normalized == "openai":
-        return OpenAILLM()
-    raise LLMConfigurationError(f"unknown LLM provider: {name}")
+
+def require_api_key() -> None:
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise LLMConfigurationError(API_KEY_MESSAGE)
+
+
+def create_adapter(model: str | None = None) -> LLMAdapter:
+    require_api_key()
+    return ModelChainLLM(build_model_chain(model))
 
 
 __all__ = [
-    "AnthropicLLM",
+    "API_KEY_MESSAGE",
+    "DEFAULT_MODELS",
     "LLMAdapter",
     "LLMConfigurationError",
     "LLMError",
-    "MockLLM",
+    "ModelChainLLM",
     "OpenAILLM",
     "RecordingLLM",
+    "available_models",
+    "build_model_chain",
     "create_adapter",
+    "require_api_key",
 ]

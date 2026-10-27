@@ -7,14 +7,16 @@ from pathlib import Path
 import typer
 
 from automigrate import __version__, db
+from automigrate.apidiff.detector import ApiDiffError
 from automigrate.config import Settings, get_settings
-from automigrate.evaluation import run_evaluation
 from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
+from automigrate.llm import LLMConfigurationError, require_api_key
 from automigrate.rag.index import index_documents
 from automigrate.report import ReportError, write_report
 from automigrate.state import Status
+from automigrate.tools.git import GitError
 
 app = typer.Typer(
     name="automigrate",
@@ -53,13 +55,13 @@ def _print_scan(result: ScanResult) -> None:
 
 @app.command()
 def scan(
-    repo: Path = typer.Argument(..., exists=True, help="Repository to scan."),
+    repository: Path = typer.Argument(..., exists=True, help="Repository to scan."),
     dependency: str | None = typer.Option(
         None, "--dependency", help="Only report usages for this dependency."
     ),
 ) -> None:
     """Scan a repository for dependency declarations and usages."""
-    result = scan_repository(repo, dependency)
+    result = scan_repository(repository, dependency)
     _print_scan(result)
     if dependency is not None and not result.declared:
         raise typer.Exit(code=2)
@@ -73,7 +75,7 @@ def scan(
             seen.add(key)
             typer.echo()
             typer.echo(f"Usages for {declaration.name}:")
-            _print_scan(scan_repository(repo, declaration.name))
+            _print_scan(scan_repository(repository, declaration.name))
 
 
 @app.command("index-docs")
@@ -101,27 +103,38 @@ def index_docs(
 
 @app.command()
 def migrate(
-    repo: Path = typer.Argument(..., exists=True, help="Repository to migrate."),
+    repository: str = typer.Argument(
+        ..., help="Repository folder path or GitHub URL."
+    ),
     dependency: str = typer.Option(..., "--dependency", help="Dependency name."),
-    from_version: str = typer.Option(..., "--from", help="Current major version."),
-    to_version: str = typer.Option(..., "--to", help="Target major version."),
+    current_version: str = typer.Option(
+        ..., "--current", "--from", help="Current version of the dependency."
+    ),
+    target_version: str = typer.Option(
+        ..., "--target", "--to", help="Target version of the dependency."
+    ),
     docs: Path | None = typer.Option(None, "--docs", help="Documentation directory."),
     max_iterations: int | None = typer.Option(
         None, "--max-iterations", min=1, help="Maximum repair iterations."
     ),
-    llm: str | None = typer.Option(None, "--llm", help="anthropic|openai|mock"),
+    model: str | None = typer.Option(
+        None, "--model", help="Primary model; falls back through the configured chain."
+    ),
     out: Path | None = typer.Option(None, "--out", help="Output directory."),
 ) -> None:
-    """Run a migration from the source version to the target version."""
-    settings = settings_from_cli(max_iterations=max_iterations, out=out, llm=llm)
+    """Run a migration from the current version to the target version."""
+    settings = settings_from_cli(
+        max_iterations=max_iterations, out=out, model=model
+    )
     try:
+        require_api_key()
         result = run_migration(
-            repo,
+            repository,
             dependency,
-            from_version,
-            to_version,
+            current_version,
+            target_version,
             docs_dir=docs or settings.docs_dir,
-            llm=settings.llm_provider,
+            model=settings.model,
             max_iterations=settings.max_iterations,
             outputs_dir=settings.outputs_dir,
             db_path=settings.db_path,
@@ -129,6 +142,9 @@ def migrate(
             score_threshold=settings.score_threshold,
             subprocess_timeout=settings.subprocess_timeout,
         )
+    except (LLMConfigurationError, ApiDiffError, GitError, FileNotFoundError) as exc:
+        typer.echo(f"migration failed to start: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     except Exception as exc:
         typer.echo(f"migration failed to start: {exc}", err=True)
         raise typer.Exit(code=1) from exc
@@ -174,43 +190,17 @@ def report(
     raise typer.Exit(code=0 if result.status == Status.SUCCESSFUL.value else 2)
 
 
-@app.command("eval")
-def evaluate(
-    llm: str = typer.Option("mock", "--llm", help="anthropic|openai|mock"),
-    cases: Path = typer.Option(
-        Path("benchmarks/cases"), "--cases", help="Benchmark cases directory."
-    ),
-) -> None:
-    """Run the benchmark suite."""
-    results, metrics = run_evaluation(cases, llm=llm)
-    typer.echo(
-        f"Cases passed: {metrics['cases_passed']}/{metrics['cases']} | "
-        f"success rate {metrics['migration_success_rate']:.0%} | "
-        f"avg iterations {metrics['average_iterations']:.2f} | "
-        f"time {metrics['execution_time_s']:.2f}s"
-    )
-    for item in results:
-        marker = "PASS" if item.passed else "FAIL"
-        typer.echo(
-            f"  [{marker}] {item.case.name}: {item.actual_status}"
-            + (f" ({item.actual_diagnosis})" if item.actual_diagnosis else "")
-            + (f" - {item.flag_reason}" if item.flag_reason else "")
-        )
-    if any(not item.passed for item in results):
-        raise typer.Exit(code=1)
-
-
 def settings_from_cli(
     *,
     max_iterations: int | None = None,
     out: Path | None = None,
-    llm: str | None = None,
+    model: str | None = None,
 ) -> Settings:
     overrides: dict[str, object] = {}
     if max_iterations is not None:
         overrides["max_iterations"] = max_iterations
     if out is not None:
         overrides["outputs_dir"] = out
-    if llm is not None:
-        overrides["llm_provider"] = llm
+    if model is not None:
+        overrides["model"] = model
     return get_settings(**overrides)

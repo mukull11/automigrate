@@ -1,7 +1,6 @@
 """Application configuration loaded from environment variables."""
 
 from pathlib import Path
-from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,7 +28,7 @@ class Settings(BaseSettings):
     top_k: int = Field(default=6, ge=1)
     score_threshold: float = 0.0
     subprocess_timeout: int = Field(default=120, ge=1)
-    llm_provider: Literal["anthropic", "openai", "mock"] = "mock"
+    model: str | None = None
 
 
 def get_settings(**overrides: object) -> Settings:
