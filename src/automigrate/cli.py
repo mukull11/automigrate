@@ -131,6 +131,11 @@ def migrate(
     model: str | None = typer.Option(
         None, "--model", help="Primary model for the selected provider."
     ),
+    base_url: str | None = typer.Option(
+        None,
+        "--base-url",
+        help="Override the provider base URL (required for the custom provider).",
+    ),
     out: Path | None = typer.Option(None, "--out", help="Output directory."),
     api_key: str | None = typer.Option(
         None,
@@ -169,6 +174,7 @@ def migrate(
             docs_dir=docs or settings.docs_dir,
             model=selected_model or None,
             provider=selected.id,
+            base_url=base_url,
             api_key=resolved_key,
             max_iterations=settings.max_iterations,
             outputs_dir=settings.outputs_dir,

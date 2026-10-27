@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
+from automigrate.llm.base import (
+    LLMAdapter,
+    LLMClient,
+    LLMConfigurationError,
+    LLMError,
+)
 from automigrate.llm.chain import (
     DEFAULT_MODELS,
     ModelChainLLM,
@@ -51,6 +56,7 @@ __all__ = [
     "API_KEY_MESSAGE",
     "DEFAULT_MODELS",
     "LLMAdapter",
+    "LLMClient",
     "LLMConfigurationError",
     "LLMError",
     "MissingKeyError",

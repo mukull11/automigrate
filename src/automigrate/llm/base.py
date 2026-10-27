@@ -62,3 +62,7 @@ class LLMAdapter(ABC):
         iteration: int = 0,
     ) -> str:
         """Return the model's raw text response for a prompt."""
+
+
+# The blueprint calls this contract LLMClient; LLMAdapter is the historical name.
+LLMClient = LLMAdapter
