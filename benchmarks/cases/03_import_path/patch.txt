@@ -1,6 +1,0 @@
-FILE: src/app.py
-<<<<<<< SEARCH
-from lib.utils import helper
-=======
-from lib.core.helpers import helper
->>>>>>> REPLACE

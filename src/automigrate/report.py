@@ -87,8 +87,9 @@ def build_report(conn, session_id: str) -> ReportResult:
         f"# Migration report: {session_id}",
         "",
         f"- Repository: {summary['repo_name']} (`{summary['repo_path']}`)",
-        f"- Dependency: {summary['dependency']} "
-        f"{summary['source_version']} -> {summary['target_version']}",
+        f"- Dependency: {summary['dependency']}",
+        f"- Current version: {summary['source_version']}",
+        f"- Target version: {summary['target_version']}",
         f"- Status: {summary['status']}",
         f"- Iterations: {summary['iterations']}",
         f"- Started: {summary['started_at']}",

@@ -1,4 +1,4 @@
-.PHONY: install test lint eval ui
+.PHONY: install test lint ui
 
 install:
 	python -m pip install -e ".[dev]"
@@ -9,8 +9,5 @@ test:
 lint:
 	python -m ruff check src tests
 
-eval:
-	python -m automigrate eval --llm mock
-
 ui:
-	python -m streamlit run src/automigrate/app/ui.py
+	python -m streamlit run app/ui.py

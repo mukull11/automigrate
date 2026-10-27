@@ -12,7 +12,7 @@
 
 ## Windows compatibility
 - The developer runs Windows with PowerShell. Do not rely on `make`.
-- Provide the same tasks as a `scripts/tasks.ps1` file (install, test, lint, eval, ui) and in the README. A Makefile may also exist, but it is optional.
+- Provide the same tasks as a `scripts/tasks.ps1` file (install, test, lint, ui) and in the README. A Makefile may also exist, but it is optional.
 - Use `py -3.11` as the Python launcher in docs, and `python -m pytest` style commands in scripts.
 - Use pathlib for all paths. Never hardcode `/` separators.
 - Do not use shell features that only work on Linux.

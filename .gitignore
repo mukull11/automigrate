@@ -21,7 +21,6 @@ htmlcov/
 *.db
 outputs/
 workspace/
-benchmarks/results/
 
 # Editors and OS
 .vscode/

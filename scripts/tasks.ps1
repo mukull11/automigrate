@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("install", "test", "lint", "eval", "ui")]
+    [ValidateSet("install", "test", "lint", "ui")]
     [string]$Task = "test"
 )
 
@@ -15,9 +15,6 @@ switch ($Task) {
     }
     "lint" {
         python -m ruff check src tests
-    }
-    "eval" {
-        python -m automigrate eval --llm mock
     }
     "ui" {
         python -m streamlit run app/ui.py
