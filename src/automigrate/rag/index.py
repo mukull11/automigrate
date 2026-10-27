@@ -60,3 +60,38 @@ def index_documents(
         stats.files_indexed += 1
         stats.chunks_written += len(chunks)
     return stats
+
+
+def index_text_documents(
+    conn: sqlite3.Connection,
+    documents: list[tuple[str, str]],
+    dependency: str,
+    version_hint: str | None = None,
+) -> IndexStats:
+    """Index in-memory documents such as files shipped inside a package."""
+
+    stats = IndexStats()
+    for source_doc, text in documents:
+        chunks = chunk_text(text, source_doc)
+        db.delete_doc_chunks_by_source(conn, source_doc)
+        for chunk in chunks:
+            db.upsert_doc_chunk(
+                conn,
+                chunk_id=chunk.chunk_id,
+                source_doc=chunk.source_doc,
+                heading_path=chunk.heading_path,
+                text=chunk.text,
+                dependency=dependency,
+                version_hint=version_hint,
+                sha256=chunk.chunk_id,
+            )
+        stats.files_indexed += 1
+        stats.chunks_written += len(chunks)
+    return stats
+
+
+def clear_dependency_chunks(conn: sqlite3.Connection, dependency: str) -> None:
+    """Remove indexed chunks for one dependency before a fresh run."""
+
+    conn.execute("DELETE FROM doc_chunk WHERE dependency = ?", (dependency,))
+    conn.commit()

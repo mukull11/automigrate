@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from automigrate.apidiff.models import ApiDiff
+
 
 class Stage(str, Enum):
     INGEST = "INGEST"
@@ -25,6 +27,7 @@ class Status(str, Enum):
     PARTIAL = "PARTIAL"
     REQUIRES_HUMAN_REVIEW = "REQUIRES_HUMAN_REVIEW"
     FAILED = "FAILED"
+    UNVERIFIED = "UNVERIFIED"
 
 
 class Diagnosis(str, Enum):
@@ -90,6 +93,7 @@ class TestRunResult(BaseModel):
     failed_test_names: list[str] = Field(default_factory=list)
     first_traceback: str | None = None
     ruff_issue_count: int = 0
+    ruff_messages: list[str] = Field(default_factory=list)
     duration_s: float = 0.0
 
 
@@ -103,10 +107,13 @@ class AgentState(BaseModel):
     from_version: str
     to_version: str
     usages: list[Usage] = Field(default_factory=list)
+    api_diff: ApiDiff | None = None
+    api_usages: list[Usage] = Field(default_factory=list)
     evidence: list[Evidence] = Field(default_factory=list)
     plan: Plan | None = None
     iteration: int = Field(default=0, ge=0)
     max_iterations: int = Field(default=5, ge=1)
+    has_tests: bool = True
     baseline: TestRunResult = Field(default_factory=TestRunResult)
     latest: TestRunResult = Field(default_factory=TestRunResult)
     diagnosis: Diagnosis | None = None
