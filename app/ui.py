@@ -14,7 +14,10 @@ import streamlit as st
 from automigrate.apidiff.detector import ApiDiffError
 from automigrate.graph import MigrationResult, run_migration
 from automigrate.llm.chain import available_models
+from automigrate.llm.keys import MissingKeyError, resolve_api_key
 from automigrate.tools.git import GitRepo
+
+_API_KEY_STATE = "_automigrate_api_key"
 
 STAGE_LABELS = (
     "Dependency usages detected",
@@ -207,6 +210,10 @@ def _show_result(result: MigrationResult) -> None:
         st.code(diff, language="diff")
 
 
+def _clear_api_key() -> None:
+    st.session_state.pop(_API_KEY_STATE, None)
+
+
 def main() -> None:
     st.set_page_config(page_title="AUTO-MIGRATE", layout="wide")
     st.title("AUTO-MIGRATE")
@@ -222,7 +229,18 @@ def main() -> None:
         current_version = st.text_input("Current Version")
         target_version = st.text_input("Target Version")
         model = st.selectbox("Model", models)
+        api_key_field = st.text_input(
+            "API key",
+            type="password",
+            key=_API_KEY_STATE,
+        )
+        if not (api_key_field or "").strip() and (
+            os.environ.get("OPENAI_API_KEY") or ""
+        ).strip():
+            st.caption("Using OPENAI_API_KEY from environment")
         submitted = st.form_submit_button("START MIGRATION")
+
+    st.button("Clear key", on_click=_clear_api_key)
 
     stored_result = st.session_state.get("migration_result")
     activity = st.session_state.get("activity") or _new_activity()
@@ -247,11 +265,10 @@ def main() -> None:
                 "Dependency, Current Version, and Target Version are required."
             )
             return
-        if not os.environ.get("OPENAI_API_KEY"):
-            st.error(
-                "OPENAI_API_KEY is not set. Set it in the environment before "
-                "starting a migration."
-            )
+        try:
+            resolved_key = resolve_api_key(api_key_field)
+        except MissingKeyError as exc:
+            st.error(str(exc))
             return
 
         activity = _new_activity()
@@ -270,6 +287,7 @@ def main() -> None:
                     current_version.strip(),
                     target_version.strip(),
                     model=model,
+                    api_key=resolved_key,
                     progress_callback=progress,
                 )
         except ApiDiffError as exc:

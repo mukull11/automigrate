@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from automigrate.llm.base import LLMAdapter, LLMConfigurationError, LLMError
 from automigrate.llm.chain import (
     DEFAULT_MODELS,
@@ -11,23 +9,25 @@ from automigrate.llm.chain import (
     available_models,
     build_model_chain,
 )
+from automigrate.llm.keys import MISSING_KEY_MESSAGE, MissingKeyError, resolve_api_key
 from automigrate.llm.openai import OpenAILLM
 from automigrate.llm.recording import RecordingLLM
 
-API_KEY_MESSAGE = (
-    "OPENAI_API_KEY is not set. AutoMigrate only runs live models; set "
-    "OPENAI_API_KEY (and optional OPENAI_BASE_URL) and see docs/real_llm.md."
-)
+API_KEY_MESSAGE = MISSING_KEY_MESSAGE
 
 
 def require_api_key() -> None:
-    if not os.environ.get("OPENAI_API_KEY"):
-        raise LLMConfigurationError(API_KEY_MESSAGE)
+    try:
+        resolve_api_key(None)
+    except MissingKeyError as exc:
+        raise LLMConfigurationError(str(exc)) from exc
 
 
-def create_adapter(model: str | None = None) -> LLMAdapter:
-    require_api_key()
-    return ModelChainLLM(build_model_chain(model))
+def create_adapter(
+    model: str | None = None, api_key: str | None = None
+) -> LLMAdapter:
+    resolved = resolve_api_key(api_key)
+    return ModelChainLLM(build_model_chain(model), api_key=resolved)
 
 
 __all__ = [
@@ -36,6 +36,7 @@ __all__ = [
     "LLMAdapter",
     "LLMConfigurationError",
     "LLMError",
+    "MissingKeyError",
     "ModelChainLLM",
     "OpenAILLM",
     "RecordingLLM",
@@ -43,4 +44,5 @@ __all__ = [
     "build_model_chain",
     "create_adapter",
     "require_api_key",
+    "resolve_api_key",
 ]

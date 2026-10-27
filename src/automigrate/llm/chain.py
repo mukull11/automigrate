@@ -45,12 +45,16 @@ class ModelChainLLM(LLMAdapter):
         models: list[str],
         *,
         factory: Callable[[str], LLMAdapter] | None = None,
+        api_key: str | None = None,
     ) -> None:
         if not models:
             raise LLMError("no models configured")
         self.models = list(models)
         self._index = 0
-        self._factory = factory or _default_factory
+        self._api_key = api_key
+        self._factory = factory or (
+            lambda model: _default_factory(model, api_key)
+        )
         self._adapters: dict[str, LLMAdapter] = {}
 
     @property
@@ -94,7 +98,7 @@ class ModelChainLLM(LLMAdapter):
                     raise
 
 
-def _default_factory(model: str) -> LLMAdapter:
+def _default_factory(model: str, api_key: str | None = None) -> LLMAdapter:
     from automigrate.llm.openai import OpenAILLM
 
-    return OpenAILLM(model=model)
+    return OpenAILLM(model=model, api_key=api_key)

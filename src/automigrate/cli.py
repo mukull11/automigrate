@@ -12,7 +12,8 @@ from automigrate.config import Settings, get_settings
 from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
-from automigrate.llm import LLMConfigurationError, require_api_key
+from automigrate.llm import LLMConfigurationError
+from automigrate.llm.keys import MissingKeyError, resolve_api_key
 from automigrate.rag.index import index_documents
 from automigrate.report import ReportError, write_report
 from automigrate.state import Status
@@ -121,13 +122,22 @@ def migrate(
         None, "--model", help="Primary model; falls back through the configured chain."
     ),
     out: Path | None = typer.Option(None, "--out", help="Output directory."),
+    api_key: str | None = typer.Option(
+        None,
+        "--api-key",
+        help="Overrides OPENAI_API_KEY for this run only.",
+    ),
 ) -> None:
     """Run a migration from the current version to the target version."""
     settings = settings_from_cli(
         max_iterations=max_iterations, out=out, model=model
     )
     try:
-        require_api_key()
+        resolved_key = resolve_api_key(api_key)
+    except MissingKeyError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    try:
         result = run_migration(
             repository,
             dependency,
@@ -135,6 +145,7 @@ def migrate(
             target_version,
             docs_dir=docs or settings.docs_dir,
             model=settings.model,
+            api_key=resolved_key,
             max_iterations=settings.max_iterations,
             outputs_dir=settings.outputs_dir,
             db_path=settings.db_path,

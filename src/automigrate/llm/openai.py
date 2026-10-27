@@ -23,9 +23,17 @@ class OpenAILLM(LLMAdapter):
         model: str | None = None,
         *,
         client: Any | None = None,
+        api_key: str | None = None,
     ) -> None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if client is None and not api_key:
+        key = api_key.strip() if api_key is not None and api_key.strip() else None
+        if client is None and key is None:
+            environment_key = os.environ.get("OPENAI_API_KEY")
+            key = (
+                environment_key.strip()
+                if environment_key is not None and environment_key.strip()
+                else None
+            )
+        if client is None and key is None:
             raise LLMConfigurationError("OPENAI_API_KEY is not set")
         self.model = resolve_model(DEFAULT_MODEL, "AUTOMIGRATE_OPENAI_MODEL", model)
         if client is not None:
@@ -38,7 +46,7 @@ class OpenAILLM(LLMAdapter):
                 "The openai package is not installed; install automigrate[openai]"
             ) from exc
         base_url = os.environ.get("OPENAI_BASE_URL")
-        options: dict[str, Any] = {"api_key": api_key}
+        options: dict[str, Any] = {"api_key": key}
         if base_url:
             options["base_url"] = base_url
         self._client = OpenAI(**options)

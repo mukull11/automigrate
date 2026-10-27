@@ -78,6 +78,7 @@ class MigrationGraph:
         to_version: str,
         docs_dir: str | Path | None = None,
         model: str | None = None,
+        api_key: str | None = None,
         max_iterations: int = 5,
         outputs_dir: str | Path = "outputs",
         db_path: str | Path = "automigrate.db",
@@ -101,6 +102,7 @@ class MigrationGraph:
         self.to_version = to_version
         self.docs_dir = Path(docs_dir).resolve() if docs_dir else None
         self.model = model
+        self.api_key = api_key
         self.max_iterations = max_iterations
         self.outputs_dir = Path(outputs_dir).resolve()
         self.db_path = Path(db_path)
@@ -278,7 +280,9 @@ class MigrationGraph:
         self.baseline_sha = self.repo.head_sha()
         self.sandbox = Sandbox(self.workspace)
 
-        adapter = self.llm_adapter or create_adapter(self.model)
+        adapter = self.llm_adapter or create_adapter(
+            self.model, api_key=self.api_key
+        )
         self.llm = RecordingLLM(adapter, self.conn, self.session_id)
 
         self.state = AgentState(
@@ -638,6 +642,7 @@ def run_migration(
     *,
     docs_dir: str | Path | None = None,
     model: str | None = None,
+    api_key: str | None = None,
     max_iterations: int = 5,
     outputs_dir: str | Path = "outputs",
     db_path: str | Path = "automigrate.db",
@@ -656,6 +661,7 @@ def run_migration(
         to_version=to_version,
         docs_dir=docs_dir,
         model=model,
+        api_key=api_key,
         max_iterations=max_iterations,
         outputs_dir=outputs_dir,
         db_path=db_path,

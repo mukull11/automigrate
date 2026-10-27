@@ -1,16 +1,22 @@
 # Running a live model
 
 AutoMigrate has no mock mode in the product. Every migration uses a live
-OpenAI-compatible chat completions endpoint. The adapter reads these environment
-variables only:
+OpenAI-compatible chat completions endpoint. The key is resolved once, in this
+order:
 
-- `OPENAI_API_KEY` - required; sent as a bearer token, never logged or persisted.
+1. An explicit key: the Streamlit `API key` field or the CLI `--api-key` flag.
+2. `OPENAI_API_KEY` from the environment.
+
+The adapter reads these environment variables:
+
+- `OPENAI_API_KEY` - required unless an explicit key is supplied; sent as a bearer
+  token, never logged or persisted.
 - `OPENAI_BASE_URL` - optional; point it at a non-OpenAI endpoint.
 - `AUTOMIGRATE_MODELS` - optional; comma-separated model chain.
 - `AUTOMIGRATE_MODEL` - optional; single-model override for the low-level adapter.
 - `GITHUB_TOKEN` - optional; read access for private GitHub URLs. Never logged.
 
-If `OPENAI_API_KEY` is unset, the CLI exits with code 1 and a message naming
+If no key is supplied, the CLI exits with code 1 and a message naming
 `OPENAI_API_KEY` and this document. There is no fallback to a fake or local model.
 
 ## Model chain

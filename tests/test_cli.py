@@ -1,8 +1,39 @@
+from types import SimpleNamespace
+
 from typer.testing import CliRunner
 
 from automigrate.cli import app
+from automigrate.state import Status, TestRunResult
 
 runner = CliRunner()
+
+
+def _fake_result(tmp_path):
+    state = SimpleNamespace(
+        status=Status.SUCCESSFUL,
+        baseline=TestRunResult(),
+        latest=TestRunResult(),
+        flag_reason=None,
+    )
+    return SimpleNamespace(
+        session_id="session",
+        state=state,
+        workspace_path=tmp_path / "workspace",
+    )
+
+
+def _migrate_args(tmp_path, *extra):
+    return [
+        "migrate",
+        str(tmp_path),
+        "--dependency",
+        "lib",
+        "--current",
+        "1.0.0",
+        "--target",
+        "2.0.0",
+        *extra,
+    ]
 
 
 def test_help_lists_commands() -> None:
@@ -70,6 +101,38 @@ def test_migrate_without_api_key_exits_with_clear_message(tmp_path, monkeypatch)
 def test_migrate_rejects_removed_mock_option(tmp_path) -> None:
     result = runner.invoke(app, ["migrate", str(tmp_path), "--llm", "mock"])
     assert result.exit_code != 0
+
+
+def test_migrate_proceeds_with_environment_key(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-key")
+    captured: dict = {}
+
+    def fake_run_migration(*args, **kwargs):
+        captured.update(kwargs)
+        return _fake_result(tmp_path)
+
+    monkeypatch.setattr("automigrate.cli.run_migration", fake_run_migration)
+    result = runner.invoke(app, _migrate_args(tmp_path))
+
+    assert result.exit_code == 0
+    assert captured["api_key"] == "environment-key"
+
+
+def test_migrate_api_key_flag_overrides_environment(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "environment-key")
+    captured: dict = {}
+
+    def fake_run_migration(*args, **kwargs):
+        captured.update(kwargs)
+        return _fake_result(tmp_path)
+
+    monkeypatch.setattr("automigrate.cli.run_migration", fake_run_migration)
+    result = runner.invoke(
+        app, _migrate_args(tmp_path, "--api-key", "flag-key")
+    )
+
+    assert result.exit_code == 0
+    assert captured["api_key"] == "flag-key"
 
 
 def test_index_docs_command(tmp_path) -> None:

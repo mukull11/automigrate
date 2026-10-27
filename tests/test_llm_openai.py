@@ -59,6 +59,22 @@ def test_openai_reads_env_base_url_key_and_model(monkeypatch) -> None:
     assert str(llm._client.base_url) == "https://example.test/v1/"
 
 
+def test_openai_explicit_api_key_is_passed_to_client(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr("openai.OpenAI", FakeOpenAI)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+
+    OpenAILLM(model="test-model", api_key="test-key-123")
+
+    assert captured["api_key"] == "test-key-123"
+
+
 def test_openai_request_is_built_with_model_messages_and_key() -> None:
     captured: dict = {}
     # The real client needs a base_url too; build it through the SDK.
