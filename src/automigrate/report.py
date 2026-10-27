@@ -69,6 +69,26 @@ def _changes_table(changes: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _attempts_table(actions: list[dict[str, Any]]) -> list[str]:
+    attempts = [
+        action
+        for action in actions
+        if action.get("action_type") == "model_attempt"
+    ]
+    if not attempts:
+        return ["No model attempts recorded."]
+    lines = [
+        "| Iteration | Stage | Attempt |",
+        "|-----------|-------|---------|",
+    ]
+    for attempt in attempts:
+        summary = (attempt.get("output_summary") or "").replace("|", "\\|")
+        lines.append(
+            f"| {attempt['iteration']} | {attempt['stage']} | {summary} |"
+        )
+    return lines
+
+
 def build_report(conn, session_id: str) -> ReportResult:
     """Build report content for one session without writing it."""
 
@@ -78,6 +98,12 @@ def build_report(conn, session_id: str) -> ReportResult:
 
     tests = db.list_test_runs(conn, session_id)
     changes = db.list_migration_changes(conn, session_id)
+    actions = db.list_agent_actions(conn, session_id)
+    attempts = [
+        action
+        for action in actions
+        if action.get("action_type") == "model_attempt"
+    ]
     baseline = tests[0] if tests else None
     latest = tests[-1] if tests else None
     unresolved = _unresolved(latest)
@@ -105,6 +131,10 @@ def build_report(conn, session_id: str) -> ReportResult:
         "## Affected files",
         "",
         *_changes_table(changes),
+        "",
+        "## Model attempts",
+        "",
+        *_attempts_table(actions),
         "",
         "## Unresolved failures",
         "",
@@ -153,6 +183,7 @@ def build_report(conn, session_id: str) -> ReportResult:
         "latest": latest,
         "tests": tests,
         "changes": changes,
+        "model_attempts": attempts,
         "unresolved_failures": unresolved,
     }
     outputs_dir = Path("outputs")

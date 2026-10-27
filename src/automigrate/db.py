@@ -255,6 +255,20 @@ def add_agent_action(
     return int(cursor.lastrowid)
 
 
+def list_agent_actions(
+    conn: sqlite3.Connection, session_id: str
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM agent_action
+        WHERE session_id = ?
+        ORDER BY id ASC
+        """,
+        (session_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def add_test_run(
     conn: sqlite3.Connection,
     session_id: str,
