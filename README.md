@@ -1,9 +1,9 @@
 # AutoMigrate
 
-AutoMigrate detects dependency API changes in a Python repository and, when it can prove a fix with tests, proposes a patch for the affected code. It never edits your original repository. All changes happen in a temporary working copy, and the result is a report you can review.
+AutoMigrate detects outdated dependencies in a Python repository and, when it can prove a fix with tests, proposes a patch for the affected code. You give it only a repository: it discovers the declared dependencies, asks the LLM which ones to migrate, resolves the target versions, then runs the test-guided repair loop for each dependency. It never edits your original repository. All changes happen in a temporary working copy, and the result is a report you can review.
 
 ```
-Clone -> API diff -> Usage scan -> Baseline -> Plan -> Patch -> Test -> Diagnose -> (loop | Done | Flag)
+Discover -> Triage -> Clone -> API diff -> Usage scan -> Baseline -> Plan -> Patch -> Test -> Diagnose -> (loop | Done | Flag)
 ```
 
 Test results drive the next step. When the system cannot safely repair a failure, it stops and reports why.
@@ -12,14 +12,16 @@ Repository: https://github.com/mukull11/automigrate
 
 ## What it does
 
-1. **Clone:** accepts a local folder or a GitHub URL and copies it into a temporary workspace.
-2. **API diff:** installs the current and target versions of the dependency into separate temporary folders with `pip install --target`, then compares their public names using `ast`. Each candidate name is also checked at runtime in both versions in a separate subprocess. This catches names removed through package internals, such as `numpy.float_`.
-3. **Usage scan:** finds every use of a changed name in the repository, with file and line.
-4. **Retrieve documentation:** indexes a docs folder passed with `--docs`, plus the README and CHANGELOG shipped with the installed target package. Retrieval uses keyword search (BM25).
-5. **Baseline:** runs `pytest` and `ruff` before any change.
-6. **Plan, patch, test:** the LLM proposes SEARCH/REPLACE edits, which must match the file exactly once. Tests and ruff are rerun after each patch. Test files are read-only to the agent.
-7. **Diagnose:** on failure, the run retries, moves to the next model of the same provider, rolls back to baseline, or stops for human review.
-8. **Report:** writes `report.md` and `report.json` with the status, detected changes, every edit with its file and line, model attempts, and test results before and after.
+1. **Discover:** parses `requirements*.txt`, `pyproject.toml`, `setup.cfg`, and `Pipfile`, asks PyPI for each dependency's latest stable release (pre-releases and yanked files are skipped), and counts usages in the source. Unpinned dependencies fall back to the installed version; private or unknown packages are marked `unresolved` and skipped.
+2. **Triage:** the LLM receives each candidate (name, current -> latest, declared file, usage count, sample symbols) and returns the dependencies to migrate. Every selection is validated against the candidate set; invalid output is retried once, then a deterministic usage-ranked fallback is used. `--max-dependencies` caps the work (0 means all outdated dependencies).
+3. **Clone:** accepts a local folder or a GitHub URL and copies it into a workspace. A URL is cloned once and reused for every selected dependency.
+4. **API diff:** installs the current and target versions of the dependency into separate temporary folders with `pip install --target`, then compares their public names using `ast`. Each candidate name is also checked at runtime in both versions in a separate subprocess. This catches names removed through package internals, such as `numpy.float_`.
+5. **Usage scan:** finds every use of a changed name in the repository, with file and line.
+6. **Retrieve documentation:** indexes a docs folder passed with `--docs`, plus the README and CHANGELOG shipped with the installed target package. Retrieval uses keyword search (BM25).
+7. **Baseline:** runs `pytest` and `ruff` before any change.
+8. **Plan, patch, test:** the LLM proposes SEARCH/REPLACE edits, which must match the file exactly once. Tests and ruff are rerun after each patch. Test files are read-only to the agent.
+9. **Diagnose:** on failure, the run retries, moves to the next model of the same provider, rolls back to baseline, or stops for human review.
+10. **Report:** writes `report.md` and `report.json` with the status, detected changes, every edit with its file and line, model attempts, and test results before and after. One report is produced per migrated dependency.
 
 ## Status meanings
 
@@ -47,18 +49,20 @@ python -m pip install -e ".[dev,ui]"
 python -m pytest -q
 ```
 
-Run a migration. Set the key in the same window you run the command in:
+Run an autonomous migration. Set the key in the same window you run the command in:
 
 ```powershell
 $env:GROQ_API_KEY = "<your-key>"
-python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b
+python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --provider groq --model openai/gpt-oss-120b
 ```
 
 Or migrate a local folder:
 
 ```powershell
-python -m automigrate migrate C:\path\to\project --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b
+python -m automigrate migrate C:\path\to\project --provider groq --model openai/gpt-oss-120b
 ```
+
+The command prints every declared dependency (`current -> latest`, usage count), the LLM triage decision, and a per-dependency result. Add `--max-dependencies 3` to cap the run; without it, every outdated dependency is attempted.
 
 Open the Streamlit UI:
 
@@ -102,17 +106,21 @@ Fallback stays within one provider. On 404 or 429, AutoMigrate tries the next mo
 | `--no-allow-undocumented` | Explicitly keep the default. |
 | `--docs DIR` | Folder of migration docs to index. |
 | `--max-iterations N` | Repair iterations, default 5. |
-| `--out DIR` | Output folder, default `outputs\`. |
+| `--max-dependencies N` | Maximum outdated dependencies to attempt. `0` (the default) means all. |
+| `--out DIR` | Output folder, default `D:\AutoMigrateOutputs` on Windows. |
 
 | Environment variable | Purpose |
 |---|---|
 | `AUTOMIGRATE_MODELS` | Comma-separated model chain override for the selected provider. |
 | `AUTOMIGRATE_ALLOW_UNDOCUMENTED` | `true` or `false`. The CLI flag takes precedence. |
 | `AUTOMIGRATE_MAX_ITERATIONS` | Repair iterations, default 5. |
+| `AUTOMIGRATE_MAX_DEPENDENCIES` | Maximum outdated dependencies, `0` means all. |
+| `AUTOMIGRATE_OUTPUTS_DIR` | Overrides the outputs folder. |
+| `AUTOMIGRATE_DB` | Overrides the SQLite database path. Defaults to `<outputs folder>\automigrate.db`. |
 | `OPENAI_BASE_URL` | Base URL for the OpenAI-compatible endpoint. Set it to match the provider you use. |
 | `GITHUB_TOKEN` | Read access to private GitHub repositories. Never logged. |
 
-Run `python -m automigrate report <session-id>` to rebuild a report for any past run. Session IDs are the folder names under `outputs\`.
+Run `python -m automigrate report <session-id>` to rebuild a report for any past run. Session IDs are the folder names under the outputs folder (`D:\AutoMigrateOutputs` by default). The command reads the default database at `<outputs folder>\automigrate.db`; use `--db <path>` to read an older database, for example the legacy `automigrate.db` in the project root.
 
 ## Demo
 
@@ -120,10 +128,10 @@ A small public fixture that calls a function removed in numpy 2.0:
 
 ```powershell
 $env:GROQ_API_KEY = "<your-key>"
-python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --dependency numpy --current 1.24.0 --target 2.0.0 --provider groq --model openai/gpt-oss-120b --allow-undocumented
+python -m automigrate migrate https://github.com/mukull11/numpy-migration-test.git --provider groq --model openai/gpt-oss-120b --allow-undocumented
 ```
 
-Expected result: the detector reports `numpy.float_` as removed, the planner proposes `np.float_(x)` to `np.float64(x)`, the tests pass, and the status is `SUCCESSFUL`. The original fixture on GitHub is not changed. The edited copy is in `outputs\<session-id>\workspace`.
+Expected result: the detector reports `numpy.float_` as removed, the planner proposes `np.float_(x)` to `np.float64(x)`, the tests pass, and the status is `SUCCESSFUL`. The original fixture on GitHub is not changed. The edited copy is in `D:\AutoMigrateOutputs\<session-id>\workspace`.
 
 Without `--allow-undocumented`, the same run stops with `REQUIRES_HUMAN_REVIEW` before patching. That is the default safety behaviour.
 

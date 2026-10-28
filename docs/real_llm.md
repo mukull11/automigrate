@@ -70,8 +70,17 @@ Remove-Item Env:OPENAI_API_KEY
 ## 3. Migrate a repository
 
 ```powershell
-python -m automigrate migrate https://github.com/org/project --dependency requests --current 2.28.0 --target 2.32.0
+python -m automigrate migrate https://github.com/org/project --provider groq --model openai/gpt-oss-120b
 ```
+
+The command discovers every declared dependency, resolves each one's latest
+stable version from PyPI, and asks the selected model which dependencies to
+migrate. The model only triages the list; the deterministic API diff decides what
+actually changed, and the repository's tests decide whether a patch is accepted.
+Use `--max-dependencies N` to cap the number of attempted dependencies (the
+default, `0`, attempts all outdated ones). Reports and workspaces are written under
+`D:\AutoMigrateOutputs` on Windows, or the folder set by
+`AUTOMIGRATE_OUTPUTS_DIR`.
 
 The current and target versions must be installable from PyPI. The bundled
 `examples/rename_sample` fixture uses a local `lib` stub, so it is only used by the
@@ -79,11 +88,15 @@ offline tests and cannot be migrated live without a real published package. Auto
 `pip install --target` for each version, parses both package trees with `ast`, and
 feeds the deterministic diff and the repository usage scan to the planner.
 
-Copy the `Session:` value from the output and render the report:
+Copy a `Session:` value from the per-dependency output and render the report:
 
 ```powershell
 python -m automigrate report <session_id>
 ```
+
+Reports and workspaces are under `D:\AutoMigrateOutputs` on Windows (override with
+`AUTOMIGRATE_OUTPUTS_DIR`). `report` reads `<outputs>\automigrate.db`; pass
+`--db automigrate.db` to read a legacy database in the project root.
 
 ## 4. Private repositories
 
@@ -91,7 +104,7 @@ Export a token with read access before running the command:
 
 ```powershell
 $env:GITHUB_TOKEN = "<your-token>"
-python -m automigrate migrate https://github.com/org/private-project --dependency foo --current 1.0.0 --target 2.0.0
+python -m automigrate migrate https://github.com/org/private-project
 ```
 
 The token is injected into the temporary clone URL and redacted from git errors. It

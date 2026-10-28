@@ -7,9 +7,11 @@ agent or graph code.
 ```
 Interfaces   cli.py (Typer)            app/ui.py (Streamlit)
                  \                        /
+Auto mode          auto.py: discover -> triage -> per-dependency runs
+                 \                        /
 Orchestrator        graph.py state machine
                  /        |         \
-Agents      planner.py  patcher.py  diagnoser.py
+Agents      planner.py  patcher.py  diagnoser.py  triage.py
                  \        |         /
 API diff      pip install -> ast symbols -> deterministic diff -> usage scan
 RAG           loaders -> chunker -> index -> retriever
@@ -18,7 +20,32 @@ Persistence   db.py (SQLite)
 LLM adapters  openai-compatible model chain (one interface)
 ```
 
-Both interfaces call `graph.run_migration()` and contain no pipeline logic.
+Both interfaces call `auto.run_auto_migration()`, which owns dependency discovery
+and triage and then calls `graph.run_migration()` once per selected dependency.
+They contain no pipeline logic.
+
+## Autonomous workflow
+
+1. **Resolve the source once.** A GitHub URL is cloned once into a temporary
+   folder and reused for discovery and every dependency run. A local folder is
+   used in place; `run_migration` still copies it into a workspace.
+2. **Discover.** `ingest/versions.py` parses declarations with
+   `detect_declarations`, asks `https://pypi.org/pypi/{name}/json` for the latest
+   stable release (pre-releases and yanked files are skipped), compares versions
+   with `packaging.version.Version`, and counts usages with `scan_repository`.
+   Unpinned dependencies fall back to `importlib.metadata.version`. Missing,
+   private, or invalid packages are marked `unresolved` rather than guessed.
+3. **Triage.** `agent/triage.py` sends the candidates to the LLM and validates the
+   returned dependency names and versions against the candidate set. Invalid or
+   duplicate output is retried once, then a deterministic usage-ranked fallback
+   is used. `max_dependencies` (0 = all) caps the selection.
+4. **Migrate.** Each selected dependency calls the unchanged
+   `graph.run_migration()` with explicit current/target versions and a fresh
+   session and workspace. A failed dependency does not stop the others. Progress
+   messages are prefixed with `[dependency]` for the activity panel.
+
+The LLM triages; the deterministic detector verifies the actual API changes;
+tests decide whether the patch is accepted.
 
 ## State machine
 
@@ -49,10 +76,12 @@ when re-entering PLAN from DIAGNOSE. The default `max_iterations` is 5.
 
 ## Workspace lifecycle
 
-1. `prepare_workspace` copies the repository into `outputs/<session_id>/workspace`,
-   initialises git, and commits `automigrate: baseline`. Generated caches
-   (`__pycache__`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`) are excluded via
-   `.git/info/exclude` so they never end up in a migration commit.
+1. `prepare_workspace` copies the repository into
+   `<outputs>/<session_id>/workspace`, initialises git, and commits
+   `automigrate: baseline`. On Windows `<outputs>` defaults to
+   `D:\AutoMigrateOutputs`; override it with `AUTOMIGRATE_OUTPUTS_DIR`. Generated
+   caches (`__pycache__`, `.pytest_cache`, `.ruff_cache`, `.mypy_cache`) are
+   excluded via `.git/info/exclude` so they never end up in a migration commit.
 2. Each successful PATCH commits `automigrate: iter {n} - {summary}`.
 3. If a pass count drops during a repair iteration, the workspace is reset to the
    commit before that patch.
@@ -60,10 +89,20 @@ when re-entering PLAN from DIAGNOSE. The default `max_iterations` is 5.
    reset to the baseline commit before the report row is written. No unverified
    patch remains.
 
-A GitHub URL is cloned into a temporary directory first; the clone is removed
-after the workspace copy is made. Private clones may use `GITHUB_TOKEN`, which is
-redacted from errors and never persisted. The original repository is never written
-to.
+A GitHub URL is cloned into a temporary directory once per auto run; each
+dependency run copies that clone into its own workspace. The clone is removed
+when the run ends. Private clones may use `GITHUB_TOKEN`, which is redacted from
+errors and never persisted. The original repository is never written to.
+
+## Outputs and database
+
+Runtime state lives outside the project folder. On Windows the default is
+`D:\AutoMigrateOutputs`, falling back to `%LOCALAPPDATA%\AutoMigrate\outputs`
+when the drive is unavailable. `AUTOMIGRATE_OUTPUTS_DIR` overrides the folder.
+The default database is `<outputs>\automigrate.db`; `AUTOMIGRATE_DB` overrides it.
+`automigrate report <session-id>` reads that default database, and `--db` reads a
+legacy or alternate database. The existing `automigrate.db` in the project root is
+left untouched.
 
 ## API diff
 
