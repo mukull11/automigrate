@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from automigrate import db
-from automigrate.config import default_outputs_dir
+from automigrate.config import default_outputs_dir, ensure_outputs_dir
 
 FLAGGED_STATUSES = {"REQUIRES_HUMAN_REVIEW", "FAILED", "PARTIAL"}
 
@@ -90,13 +90,19 @@ def _attempts_table(actions: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def build_report(conn, session_id: str) -> ReportResult:
+def build_report(
+    conn,
+    session_id: str,
+    outputs_dir: str | Path | None = None,
+) -> ReportResult:
     """Build report content for one session without writing it."""
 
     summary = db.get_session_summary(conn, session_id)
     if summary is None:
         raise ReportError(f"unknown session: {session_id}")
 
+    base = Path(outputs_dir) if outputs_dir is not None else default_outputs_dir()
+    workspace_path = base / session_id / "workspace"
     tests = db.list_test_runs(conn, session_id)
     changes = db.list_migration_changes(conn, session_id)
     actions = db.list_agent_actions(conn, session_id)
@@ -122,7 +128,7 @@ def build_report(conn, session_id: str) -> ReportResult:
         f"- Started: {summary['started_at']}",
         f"- Ended: {summary['ended_at'] or 'not recorded'}",
         f"- Flag reason: {summary['final_reason'] or 'none'}",
-        f"- Workspace: outputs/{session_id}/workspace",
+        f"- Workspace: {workspace_path}",
         f"- Rolled back to baseline: {'yes' if flagged else 'no'}",
         "",
         "## Tests",
@@ -172,6 +178,7 @@ def build_report(conn, session_id: str) -> ReportResult:
         "status": summary["status"],
         "repository": summary["repo_name"],
         "repo_path": summary["repo_path"],
+        "workspace_path": str(workspace_path),
         "dependency": summary["dependency"],
         "from_version": summary["source_version"],
         "to_version": summary["target_version"],
@@ -187,7 +194,7 @@ def build_report(conn, session_id: str) -> ReportResult:
         "model_attempts": attempts,
         "unresolved_failures": unresolved,
     }
-    outputs_dir = default_outputs_dir()
+    outputs_dir = base
     report_path = outputs_dir / session_id / "report.md"
     return ReportResult(
         session_id=session_id,
@@ -206,8 +213,9 @@ def write_report(
 ) -> ReportResult:
     """Render and persist report.md/report.json for a session."""
 
-    result = build_report(conn, session_id)
+    result = build_report(conn, session_id, outputs_dir)
     base = Path(outputs_dir) if outputs_dir is not None else default_outputs_dir()
+    ensure_outputs_dir(base)
     directory = base / session_id
     directory.mkdir(parents=True, exist_ok=True)
     report_path = directory / "report.md"
