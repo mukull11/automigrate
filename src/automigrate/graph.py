@@ -25,15 +25,17 @@ from automigrate.apidiff.detector import ApiDetector, ApiDiffError, PipApiDiffDe
 from automigrate.apidiff.diff import filter_public_diff
 from automigrate.apidiff.runtime import add_removed_names
 from automigrate.apidiff.usages import collect_imported_modules, scan_api_usages
-from automigrate.config import default_outputs_dir, get_settings
+from automigrate.config import (
+    default_outputs_dir,
+    ensure_outputs_dir,
+    get_settings,
+)
 from automigrate.ingest.dependencies import find_declaration
 from automigrate.ingest.scanner import ScanResult, find_python_files, scan_repository
-from automigrate.llm import RecordingLLM, create_adapter
+from automigrate.llm import RecordingLLM
 from automigrate.llm.base import LLMAdapter, LLMError
-from automigrate.llm.chain import create_provider_chain
-from automigrate.llm.keys import resolve_api_key
-from automigrate.llm.models import check_model, list_models, redact_secret
-from automigrate.llm.providers import get_provider
+from automigrate.llm.factory import build_llm_adapter
+from automigrate.llm.models import redact_secret
 from automigrate.rag.index import clear_dependency_chunks, index_documents, index_text_documents
 from automigrate.rag.retriever import build_query, retrieve
 from automigrate.state import (
@@ -111,7 +113,7 @@ class MigrationGraph:
         max_iterations: int = 5,
         allow_undocumented: bool | None = None,
         outputs_dir: str | Path | None = None,
-        db_path: str | Path = "automigrate.db",
+        db_path: str | Path | None = None,
         top_k: int = 6,
         score_threshold: float = 0.0,
         subprocess_timeout: int = 120,
@@ -146,7 +148,12 @@ class MigrationGraph:
             if outputs_dir is not None
             else default_outputs_dir()
         )
-        self.db_path = Path(db_path)
+        ensure_outputs_dir(self.outputs_dir)
+        self.db_path = (
+            Path(db_path)
+            if db_path is not None
+            else self.outputs_dir / "automigrate.db"
+        )
         self.top_k = top_k
         self.score_threshold = score_threshold
         self.subprocess_timeout = subprocess_timeout
@@ -398,47 +405,18 @@ class MigrationGraph:
                 self.conn,
                 self.session_id,
             )
-        if self.provider is None:
-            adapter = create_adapter(self.model, api_key=self.api_key)
-            return RecordingLLM(adapter, self.conn, self.session_id)
-
-        selected = get_provider(self.provider)
-        key = resolve_api_key(selected, self.api_key)
-        base_url = self.base_url or selected.base_url
-        listing = list_models(selected, key, base_url=base_url)
-        models = list(listing.models)
-        requested = (self.model or "").strip()
-        if requested:
-            if requested in models:
-                index = models.index(requested)
-                models = models[index:] + models[:index]
-            else:
-                models = [requested, *models]
-        if not models:
-            raise LLMError(
-                f"{selected.display_name} returned no models"
-            )
-        checked_model = models[0]
-        check = check_model(
-            selected, checked_model, key, base_url=base_url
-        )
-        if check.fatal:
-            raise LLMError(
-                f"{selected.display_name} rejected model {checked_model} "
-                f"(HTTP {check.status_code}): {check.error or 'unknown error'}"
-            )
-        chain = create_provider_chain(
-            selected,
-            models,
-            api_key=key,
-            base_url=base_url,
+        adapter = build_llm_adapter(
+            model=self.model,
+            provider=self.provider,
+            base_url=self.base_url,
+            api_key=self.api_key,
             on_attempt=self._record_model_attempt,
         )
         return RecordingLLM(
-            chain,
+            adapter,
             self.conn,
             self.session_id,
-            record_attempts=False,
+            record_attempts=self.provider is None,
         )
 
     def _collection_failure_reason(self, result: TestRunResult) -> str | None:
@@ -816,7 +794,7 @@ def run_migration(
     max_iterations: int = 5,
     allow_undocumented: bool | None = None,
     outputs_dir: str | Path | None = None,
-    db_path: str | Path = "automigrate.db",
+    db_path: str | Path | None = None,
     top_k: int = 6,
     score_threshold: float = 0.0,
     subprocess_timeout: int = 120,
