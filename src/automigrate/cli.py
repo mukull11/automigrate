@@ -8,8 +8,8 @@ import typer
 
 from automigrate import __version__, db
 from automigrate.apidiff.detector import ApiDiffError
+from automigrate.auto import AutoMigrationResult, run_auto_migration
 from automigrate.config import Settings, get_settings
-from automigrate.graph import run_migration
 from automigrate.ingest.dependencies import normalize_name
 from automigrate.ingest.scanner import ScanResult, scan_repository
 from automigrate.llm import LLMConfigurationError
@@ -112,16 +112,15 @@ def migrate(
     repository: str = typer.Argument(
         ..., help="Repository folder path or GitHub URL."
     ),
-    dependency: str = typer.Option(..., "--dependency", help="Dependency name."),
-    current_version: str = typer.Option(
-        ..., "--current", "--from", help="Current version of the dependency."
-    ),
-    target_version: str = typer.Option(
-        ..., "--target", "--to", help="Target version of the dependency."
-    ),
     docs: Path | None = typer.Option(None, "--docs", help="Documentation directory."),
     max_iterations: int | None = typer.Option(
         None, "--max-iterations", min=1, help="Maximum repair iterations."
+    ),
+    max_dependencies: int | None = typer.Option(
+        None,
+        "--max-dependencies",
+        min=0,
+        help="Maximum outdated dependencies to attempt (0 = all).",
     ),
     allow_undocumented: bool | None = typer.Option(
         None,
@@ -147,12 +146,13 @@ def migrate(
     api_key: str | None = typer.Option(
         None,
         "--api-key",
-        help="Overrides OPENAI_API_KEY for this run only.",
+        help="Overrides the provider's environment key for this run only.",
     ),
 ) -> None:
-    """Run a migration from the current version to the target version."""
+    """Discover outdated dependencies, triage them, and migrate each one."""
     settings = settings_from_cli(
         max_iterations=max_iterations,
+        max_dependencies=max_dependencies,
         allow_undocumented=allow_undocumented,
         out=out,
         model=model,
@@ -176,17 +176,15 @@ def migrate(
     typer.echo(f"Provider: {selected.id} ({selected.display_name})")
     typer.echo(f"Model: {selected_model or 'provider default'}")
     try:
-        result = run_migration(
+        result = run_auto_migration(
             repository,
-            dependency,
-            current_version,
-            target_version,
             docs_dir=docs or settings.docs_dir,
             model=selected_model or None,
             provider=selected.id,
             base_url=base_url,
             api_key=resolved_key,
             max_iterations=settings.max_iterations,
+            max_dependencies=settings.max_dependencies,
             allow_undocumented=settings.allow_undocumented,
             outputs_dir=settings.outputs_dir,
             db_path=settings.db_path,
@@ -201,18 +199,58 @@ def migrate(
         typer.echo(f"migration failed to start: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    state = result.state
-    typer.echo(f"Session: {result.session_id}")
-    typer.echo(f"Status: {state.status.value}")
-    typer.echo(
-        f"Tests: baseline {state.baseline.passed} passed / "
-        f"{state.baseline.failed} failed -> latest {state.latest.passed} passed / "
-        f"{state.latest.failed} failed"
-    )
-    typer.echo(f"Workspace: {result.workspace_path}")
-    if state.flag_reason:
-        typer.echo(f"Reason: {state.flag_reason}")
-    raise typer.Exit(code=0 if state.status == Status.SUCCESSFUL else 2)
+    _print_auto_result(result)
+    raise typer.Exit(code=0 if result.succeeded else 2)
+
+
+def _print_auto_result(result: AutoMigrationResult) -> None:
+    typer.echo("Detected dependencies:")
+    if not result.candidates:
+        typer.echo("  none")
+    for candidate in result.candidates:
+        current = candidate.current_version or "unknown"
+        latest = candidate.latest_version or "unknown"
+        typer.echo(
+            f"  {candidate.name}: {current} -> {latest} "
+            f"(usages={candidate.usage_count}, {candidate.status}, "
+            f"{candidate.source_file})"
+        )
+
+    if result.triage is not None:
+        typer.echo()
+        typer.echo("Triage:")
+        typer.echo(f"  {result.triage.summary or 'no summary'}")
+        if not result.triage.migrations:
+            typer.echo("  selected: none")
+        for decision in result.triage.migrations:
+            typer.echo(
+                f"  selected {decision.dependency} "
+                f"{decision.from_version} -> {decision.to_version}"
+                + (f": {decision.reason}" if decision.reason else "")
+            )
+
+    if result.runs:
+        typer.echo()
+        typer.echo("Per-dependency results:")
+        for run in result.runs:
+            typer.echo(f"  {run.dependency}: {run.status.value}")
+            if run.error:
+                typer.echo(f"    error: {run.error}")
+            elif run.result is not None:
+                state = run.result.state
+                typer.echo(
+                    f"    session {run.result.session_id}; tests "
+                    f"{state.baseline.passed} passed -> "
+                    f"{state.latest.passed} passed; "
+                    f"workspace {run.result.workspace_path}"
+                )
+                if state.flag_reason:
+                    typer.echo(f"    reason: {state.flag_reason}")
+
+    typer.echo()
+    typer.echo(f"Overall status: {result.status}")
+    typer.echo(result.summary)
+    typer.echo(f"Outputs: {result.outputs_dir}")
 
 
 @app.command()
@@ -245,6 +283,7 @@ def report(
 def settings_from_cli(
     *,
     max_iterations: int | None = None,
+    max_dependencies: int | None = None,
     allow_undocumented: bool | None = None,
     out: Path | None = None,
     model: str | None = None,
@@ -252,6 +291,8 @@ def settings_from_cli(
     overrides: dict[str, object] = {}
     if max_iterations is not None:
         overrides["max_iterations"] = max_iterations
+    if max_dependencies is not None:
+        overrides["max_dependencies"] = max_dependencies
     if allow_undocumented is not None:
         overrides["allow_undocumented"] = allow_undocumented
     if out is not None:
