@@ -62,7 +62,7 @@ Or migrate a local folder:
 python -m automigrate migrate C:\path\to\project --provider groq --model openai/gpt-oss-120b
 ```
 
-The command prints every declared dependency (`current -> latest`, usage count), the LLM triage decision, and a per-dependency result. Add `--max-dependencies 3` to cap the run; without it, every outdated dependency is attempted.
+The command prints every declared dependency (`current -> latest`, usage count), the LLM triage decision, and a per-dependency result. Triage is advisory: if the model recommends none while outdated dependencies exist, AutoMigrate selects them deterministically by usage. Add `--max-dependencies 3` to cap the run; without it, every outdated dependency is attempted.
 
 Open the Streamlit UI:
 

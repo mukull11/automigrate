@@ -44,7 +44,8 @@ def test_valid_triage_selection() -> None:
         }
     )
     result = triage_candidates(ScriptedLLM([response]), candidates)
-    assert [item.dependency for item in result.migrations] == ["numpy"]
+    assert [item.dependency for item in result.migrations] == ["numpy", "requests"]
+    assert result.migrations[1].reason == "confirmed usages always migrate"
     assert result.summary == "start with numpy"
 
 

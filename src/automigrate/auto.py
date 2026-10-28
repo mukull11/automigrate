@@ -198,12 +198,6 @@ def run_auto_migration(
             max_dependencies=max_dependencies,
         )
         result.triage = triage
-        if not triage.migrations:
-            result.status = NO_CHANGES
-            result.summary = (
-                triage.summary or "The triage step selected no dependencies."
-            )
-            return result
 
         for decision in triage.migrations:
             run_progress = _prefixed_progress(progress_callback, decision.dependency)

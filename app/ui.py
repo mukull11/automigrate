@@ -222,6 +222,10 @@ def _show_auto_result(result: AutoMigrationResult) -> None:
                 f"- `{decision.dependency}` {decision.from_version} \u2192 "
                 f"{decision.to_version} \u2014 {decision.reason}"
             )
+        for skipped in result.triage.skipped:
+            st.markdown(
+                f"- skipped `{skipped.dependency}` \u2014 {skipped.reason}"
+            )
 
     if not result.runs:
         return

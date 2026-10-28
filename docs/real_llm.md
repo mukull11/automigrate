@@ -75,8 +75,11 @@ python -m automigrate migrate https://github.com/org/project --provider groq --m
 
 The command discovers every declared dependency, resolves each one's latest
 stable version from PyPI, and asks the selected model which dependencies to
-migrate. The model only triages the list; the deterministic API diff decides what
-actually changed, and the repository's tests decide whether a patch is accepted.
+migrate first. Triage is advisory: if the model recommends none while outdated
+dependencies exist, AutoMigrate falls back to a deterministic usage-ranked
+selection. Only zero-usage candidates can be skipped. The deterministic API diff
+decides what actually changed, and the repository's tests decide whether a patch
+is accepted.
 Use `--max-dependencies N` to cap the number of attempted dependencies (the
 default, `0`, attempts all outdated ones). Reports and workspaces are written under
 `D:\AutoMigrateOutputs` on Windows, or the folder set by

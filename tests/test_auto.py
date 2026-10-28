@@ -144,15 +144,18 @@ def test_no_outdated_returns_no_changes_without_llm(tmp_path, monkeypatch) -> No
     assert called["run"] is False
 
 
-def test_triage_selecting_none_returns_no_changes(tmp_path, monkeypatch) -> None:
+def test_triage_selecting_none_uses_deterministic_fallback(
+    tmp_path, monkeypatch
+) -> None:
     monkeypatch.setattr(
         "automigrate.auto.build_candidates",
         lambda root, fetcher=None: [_candidate("a")],
     )
-    called = {"run": False}
+    calls = []
 
-    def fake_run_migration(*args, **kwargs):
-        called["run"] = True
+    def fake_run_migration(repo, dependency, from_version, to_version, **kwargs):
+        calls.append(dependency)
+        return _migration(dependency, Status.SUCCESSFUL)
 
     monkeypatch.setattr("automigrate.auto.run_migration", fake_run_migration)
     result = run_auto_migration(
@@ -160,10 +163,14 @@ def test_triage_selecting_none_returns_no_changes(tmp_path, monkeypatch) -> None
         outputs_dir=tmp_path / "out",
         triage_llm=TriageLLM([]),
     )
-    assert result.status == NO_CHANGES
+    assert result.status == SUCCESSFUL
     assert result.triage is not None
-    assert result.triage.migrations == []
-    assert called["run"] is False
+    assert [item.dependency for item in result.triage.migrations] == ["a"]
+    assert (
+        result.triage.summary
+        == "LLM recommended none; deterministic fallback selected 1"
+    )
+    assert calls == ["a"]
 
 
 def test_url_is_cloned_once(tmp_path, monkeypatch) -> None:

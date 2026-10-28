@@ -34,8 +34,14 @@ class TriageDecision(BaseModel):
     reason: str = ""
 
 
+class TriageSkip(BaseModel):
+    dependency: str
+    reason: str
+
+
 class TriageResult(BaseModel):
     migrations: list[TriageDecision] = Field(default_factory=list)
+    skipped: list[TriageSkip] = Field(default_factory=list)
     summary: str = ""
 
 
@@ -73,12 +79,18 @@ def build_triage_prompt(
             f"{previous_error}\nReturn a corrected JSON object only.\n"
         )
     return (
-        "Choose which outdated dependencies should be migrated now.\n"
+        "Choose the order in which outdated dependencies should be migrated now.\n"
+        "Triage is prioritization, not veto: dependencies with usage_count greater "
+        "than zero must be migrated.\n"
+        "You may skip only dependencies with usage_count equal to zero, and every "
+        "skip must include a reason.\n"
         "Use only names and versions from the candidate list.\n"
         "Return JSON with this exact shape:\n"
         '{"migrations": [{"dependency": "name", "from_version": "1.0.0", '
-        '"to_version": "2.0.0", "reason": "why"}], "summary": "one sentence"}\n'
-        "If none should be migrated, return an empty migrations list.\n"
+        '"to_version": "2.0.0", "reason": "why"}], '
+        '"skipped": [{"dependency": "name", "reason": "why"}], '
+        '"summary": "one sentence"}\n'
+        "If you recommend no migrations, return an empty migrations list.\n"
         f"{retry}\nCandidates:\n{_candidate_block(candidates)}\n"
     )
 
@@ -92,6 +104,47 @@ def _same_version(left: str | None, right: str | None) -> bool:
         return Version(left) == Version(right)
     except InvalidVersion:
         return False
+
+
+def _parse_skips(
+    data: dict,
+    by_name: dict[str, DependencyCandidate],
+    selected: set[str],
+) -> list[TriageSkip]:
+    raw_skips = data.get("skipped", [])
+    if not isinstance(raw_skips, list):
+        raise TriageValidationError("skipped must be a list")
+
+    skipped: list[TriageSkip] = []
+    seen: set[str] = set()
+    for raw in raw_skips:
+        if not isinstance(raw, dict):
+            raise TriageValidationError("each skip must be an object")
+        dependency = raw.get("dependency")
+        reason = raw.get("reason")
+        if not isinstance(dependency, str) or not dependency.strip():
+            raise TriageValidationError("skip dependency must be a non-empty string")
+        if not isinstance(reason, str) or not reason.strip():
+            raise TriageValidationError(
+                f"skip reason must be a non-empty string: {dependency}"
+            )
+        key = normalize_name(dependency)
+        candidate = by_name.get(key)
+        if candidate is None:
+            raise TriageValidationError(f"unknown dependency: {dependency}")
+        if candidate.usage_count > 0:
+            raise TriageValidationError(
+                f"cannot skip dependency with confirmed usages: {candidate.name}"
+            )
+        if key in selected:
+            raise TriageValidationError(
+                f"dependency cannot be both selected and skipped: {candidate.name}"
+            )
+        if key in seen:
+            raise TriageValidationError(f"duplicate skip: {dependency}")
+        seen.add(key)
+        skipped.append(TriageSkip(dependency=candidate.name, reason=reason.strip()))
+    return skipped
 
 
 def _validate(
@@ -144,10 +197,66 @@ def _validate(
             )
         )
 
+    skipped = _parse_skips(data, by_name, seen)
     if max_dependencies > 0:
         selected = selected[:max_dependencies]
     summary = data.get("summary", "")
-    return TriageResult(migrations=selected, summary=str(summary))
+    return TriageResult(
+        migrations=selected,
+        skipped=skipped,
+        summary=str(summary),
+    )
+
+
+def _finalize_selection(
+    result: TriageResult,
+    candidates: Sequence[DependencyCandidate],
+    *,
+    max_dependencies: int,
+) -> TriageResult:
+    selected = list(result.migrations)
+    selected_names = {normalize_name(item.dependency) for item in selected}
+    remaining_used = sorted(
+        (
+            candidate
+            for candidate in candidates
+            if candidate.usage_count > 0
+            and normalize_name(candidate.name) not in selected_names
+        ),
+        key=lambda candidate: (-candidate.usage_count, normalize_name(candidate.name)),
+    )
+    for candidate in remaining_used:
+        if max_dependencies > 0 and len(selected) >= max_dependencies:
+            break
+        selected.append(
+            TriageDecision(
+                dependency=candidate.name,
+                from_version=candidate.current_version or "",
+                to_version=candidate.latest_version or "",
+                reason="confirmed usages always migrate",
+            )
+        )
+        selected_names.add(normalize_name(candidate.name))
+
+    skipped = list(result.skipped)
+    skipped_names = {normalize_name(item.dependency) for item in skipped}
+    for candidate in sorted(candidates, key=lambda item: normalize_name(item.name)):
+        key = normalize_name(candidate.name)
+        if candidate.usage_count > 0 or key in selected_names or key in skipped_names:
+            continue
+        skipped.append(
+            TriageSkip(
+                dependency=candidate.name,
+                reason="zero usages; not selected by triage",
+            )
+        )
+        skipped_names.add(key)
+
+    return TriageResult(
+        migrations=selected,
+        skipped=skipped,
+        summary=result.summary,
+    )
 
 
 def deterministic_triage(
@@ -207,7 +316,23 @@ def triage_candidates(
                 prompt, system=SYSTEM_PROMPT, stage="TRIAGE", iteration=0
             )
             data = parse_json_object(response)
-            return _validate(data, outdated, max_dependencies=max_dependencies)
+            result = _validate(data, outdated, max_dependencies=max_dependencies)
+            if not result.migrations:
+                fallback = deterministic_triage(
+                    outdated,
+                    max_dependencies=max_dependencies,
+                    reason="LLM recommended none",
+                )
+                fallback.summary = (
+                    "LLM recommended none; deterministic fallback selected "
+                    f"{len(fallback.migrations)}"
+                )
+                return fallback
+            return _finalize_selection(
+                result,
+                outdated,
+                max_dependencies=max_dependencies,
+            )
         except (LLMParseError, TriageValidationError) as exc:
             last_error = str(exc)
 

@@ -90,6 +90,22 @@ def _attempts_table(actions: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _runtime_checks_section(
+    summary: dict[str, Any],
+    runtime_checks: list[dict[str, Any]],
+) -> list[str]:
+    if not runtime_checks:
+        return ["No runtime name check recorded."]
+    lines = [
+        f"- Dependency: {summary['dependency']} "
+        f"{summary['source_version']} -> {summary['target_version']}"
+    ]
+    for check in runtime_checks:
+        detail = (check.get("output_summary") or "").strip() or "no result recorded"
+        lines.append(f"- Iteration {check.get('iteration', 0)}: {detail}")
+    return lines
+
+
 def build_report(
     conn,
     session_id: str,
@@ -110,6 +126,11 @@ def build_report(
         action
         for action in actions
         if action.get("action_type") == "model_attempt"
+    ]
+    runtime_checks = [
+        action
+        for action in actions
+        if action.get("action_type") == "runtime_name_check"
     ]
     baseline = tests[0] if tests else None
     latest = tests[-1] if tests else None
@@ -142,6 +163,10 @@ def build_report(
         "## Model attempts",
         "",
         *_attempts_table(actions),
+        "",
+        "## Runtime name check",
+        "",
+        *_runtime_checks_section(summary, runtime_checks),
         "",
         "## Unresolved failures",
         "",
@@ -192,6 +217,7 @@ def build_report(
         "tests": tests,
         "changes": changes,
         "model_attempts": attempts,
+        "runtime_name_checks": runtime_checks,
         "unresolved_failures": unresolved,
     }
     outputs_dir = base

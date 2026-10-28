@@ -228,6 +228,8 @@ def _print_auto_result(result: AutoMigrationResult) -> None:
                 f"{decision.from_version} -> {decision.to_version}"
                 + (f": {decision.reason}" if decision.reason else "")
             )
+        for skipped in result.triage.skipped:
+            typer.echo(f"  skipped {skipped.dependency}: {skipped.reason}")
 
     if result.runs:
         typer.echo()

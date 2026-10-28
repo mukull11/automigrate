@@ -36,9 +36,12 @@ They contain no pipeline logic.
    Unpinned dependencies fall back to `importlib.metadata.version`. Missing,
    private, or invalid packages are marked `unresolved` rather than guessed.
 3. **Triage.** `agent/triage.py` sends the candidates to the LLM and validates the
-   returned dependency names and versions against the candidate set. Invalid or
-   duplicate output is retried once, then a deterministic usage-ranked fallback
-   is used. `max_dependencies` (0 = all) caps the selection.
+   returned dependency names and versions against the candidate set. Triage
+   prioritizes but does not veto: dependencies with confirmed usages are always
+   migrated, while only zero-usage candidates may be skipped with a reason.
+   Invalid or duplicate output is retried once. If the model recommends nothing,
+   the deterministic usage-ranked fallback selects all outdated dependencies.
+   `max_dependencies` (0 = all) caps the selection.
 4. **Migrate.** Each selected dependency calls the unchanged
    `graph.run_migration()` with explicit current/target versions and a fresh
    session and workspace. A failed dependency does not stop the others. Progress
