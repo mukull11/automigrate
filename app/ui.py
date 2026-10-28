@@ -27,7 +27,9 @@ from automigrate.activity import (
     new_activity as _new_activity,
 )
 from automigrate.apidiff.detector import ApiDiffError
-from automigrate.graph import MigrationResult, run_migration
+from automigrate.auto import AutoMigrationResult, run_auto_migration
+from automigrate.graph import MigrationResult
+from automigrate.ingest.dependencies import normalize_name
 from automigrate.llm.keys import (
     MissingKeyError,
     provider_key_from_env,
@@ -171,6 +173,71 @@ def _show_result(result: MigrationResult) -> None:
         st.code(diff, language="diff")
 
 
+def _candidate_rows(result: AutoMigrationResult) -> list[dict[str, Any]]:
+    chosen = {
+        normalize_name(item.dependency) for item in result.selected
+    }
+    rows: list[dict[str, Any]] = []
+    for candidate in result.candidates:
+        key = normalize_name(candidate.name)
+        if key in chosen:
+            decision = "chosen"
+        elif candidate.status == "outdated":
+            decision = "skipped"
+        else:
+            decision = candidate.status
+        rows.append(
+            {
+                "Dependency": candidate.name,
+                "Current": candidate.current_version or "unknown",
+                "Latest": candidate.latest_version or "unknown",
+                "Usages": candidate.usage_count,
+                "Source": candidate.source_file,
+                "Decision": decision,
+            }
+        )
+    return rows
+
+
+def _show_auto_result(result: AutoMigrationResult) -> None:
+    st.markdown("### Overall result")
+    st.markdown(f"**Status:** `{result.status}`")
+    st.write(result.summary)
+    st.caption(f"Output folder: {result.outputs_dir}")
+
+    st.markdown("#### Detected dependencies")
+    rows = _candidate_rows(result)
+    if rows:
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("No dependency declarations were detected.")
+
+    st.markdown("#### LLM triage")
+    if result.triage is None:
+        st.info("No triage decision was needed.")
+    else:
+        st.write(result.triage.summary or "No summary was returned.")
+        for decision in result.triage.migrations:
+            st.markdown(
+                f"- `{decision.dependency}` {decision.from_version} \u2192 "
+                f"{decision.to_version} \u2014 {decision.reason}"
+            )
+
+    if not result.runs:
+        return
+    st.markdown("#### Per-dependency migrations")
+    for run in result.runs:
+        label = (
+            f"{run.dependency}: {run.from_version} \u2192 {run.to_version} "
+            f"({run.status.value})"
+        )
+        with st.expander(label, expanded=len(result.runs) == 1):
+            if run.error:
+                st.error(run.error)
+            elif run.result is not None:
+                _show_result(run.result)
+
+
 def _clear_api_key() -> None:
     st.session_state.pop(_API_KEY_STATE, None)
 
@@ -214,15 +281,19 @@ def main() -> None:
         "Repository",
         placeholder="C:\\path\\to\\repo or https://github.com/org/repo",
     )
-    dependency = st.text_input("Dependency")
-    current_version = st.text_input("Current Version")
-    target_version = st.text_input("Target Version")
     allow_undocumented = st.checkbox(
         "Allow undocumented replacements",
         help=(
             "Accept confident plans even when the documentation does not name "
             "a replacement. Defaults to off."
         ),
+    )
+    max_dependencies = st.number_input(
+        "Max dependencies",
+        min_value=0,
+        value=0,
+        step=1,
+        help="0 attempts every outdated dependency. A positive value caps the run.",
     )
     provider_id = st.selectbox(
         "Provider",
@@ -269,11 +340,11 @@ def main() -> None:
             rerun()
     submitted = st.button("START MIGRATION")
 
-    stored_result = st.session_state.get("migration_result")
+    stored_result = st.session_state.get("auto_result")
     activity = st.session_state.get("activity") or _new_activity()
     final_status = (
-        stored_result.state.status.value
-        if isinstance(stored_result, MigrationResult)
+        stored_result.status
+        if isinstance(stored_result, AutoMigrationResult)
         else None
     )
     activity_slot = st.empty()
@@ -282,15 +353,6 @@ def main() -> None:
     if submitted:
         if not repository.strip():
             st.error("Enter a repository folder path or GitHub URL.")
-            return
-        if (
-            not dependency.strip()
-            or not current_version.strip()
-            or not target_version.strip()
-        ):
-            st.error(
-                "Dependency, Current Version, and Target Version are required."
-            )
             return
         if not (model or "").strip():
             st.error("Choose a model or type a model ID.")
@@ -303,24 +365,22 @@ def main() -> None:
 
         activity = _new_activity()
         st.session_state["activity"] = activity
-        st.session_state.pop("migration_result", None)
+        st.session_state.pop("auto_result", None)
 
         def progress(stage: str, message: str) -> None:
             _advance_activity(activity, stage, message)
             _render_activity(activity_slot, activity)
 
         try:
-            with st.spinner("Running migration..."):
-                result = run_migration(
+            with st.spinner("Discovering and migrating dependencies..."):
+                result = run_auto_migration(
                     repository.strip(),
-                    dependency.strip(),
-                    current_version.strip(),
-                    target_version.strip(),
                     model=model.strip(),
                     provider=provider.id,
                     base_url=(custom_base_url or "").strip() or None,
                     api_key=resolved_key,
                     allow_undocumented=allow_undocumented,
+                    max_dependencies=int(max_dependencies),
                     progress_callback=progress,
                 )
         except ApiDiffError as exc:
@@ -334,14 +394,15 @@ def main() -> None:
             st.error(f"Migration failed: {exc}")
             return
 
-        _finish_activity(activity, result.state.status.value)
+        activity_status = "SUCCESSFUL" if result.succeeded else result.status
+        _finish_activity(activity, activity_status)
         st.session_state["activity"] = activity
-        st.session_state["migration_result"] = result
-        _render_activity(activity_slot, activity, result.state.status.value)
+        st.session_state["auto_result"] = result
+        _render_activity(activity_slot, activity, activity_status)
         stored_result = result
 
-    if isinstance(stored_result, MigrationResult):
-        _show_result(stored_result)
+    if isinstance(stored_result, AutoMigrationResult):
+        _show_auto_result(stored_result)
 
 
 if __name__ == "__main__":
