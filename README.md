@@ -12,8 +12,8 @@ Repository: https://github.com/mukull11/automigrate
 
 ## What it does
 
-1. **Discover:** parses `requirements*.txt`, `pyproject.toml`, `setup.cfg`, and `Pipfile`, asks PyPI for each dependency's latest stable release (pre-releases and yanked files are skipped), and counts usages in the source. Unpinned dependencies fall back to the installed version; private or unknown packages are marked `unresolved` and skipped.
-2. **Triage:** the LLM receives each candidate (name, current -> latest, declared file, usage count, sample symbols) and returns the dependencies to migrate. Every selection is validated against the candidate set; invalid output is retried once, then a deterministic usage-ranked fallback is used. `--max-dependencies` caps the work (0 means all outdated dependencies).
+1. **Discover:** parses `requirements*.txt`, `pyproject.toml`, `setup.cfg`, and `Pipfile`, asks PyPI for each dependency's newest stable release that has a wheel or sdist and whose `Requires-Python` accepts the running interpreter (pre-releases and yanked files are skipped), and counts usages in the source. Newer releases that cannot be installed are listed with the reason they were skipped. Unpinned dependencies fall back to the installed version; private or unknown packages are marked `unresolved` and skipped.
+2. **Triage:** the LLM receives each candidate (name, current -> latest, declared file, usage count, sample symbols, confirmed breaking usage) and returns the order in which to migrate them. A dependency is migrated only when the API diff and usage scan find a removed, renamed, or changed-parameter name that the repository actually uses. Dependencies with no confirmed breaking usage are reported as `outdated, no breaking usage found` and are not migrated. Every selection is validated against the candidate set; invalid output is retried once, then a deterministic usage-ranked fallback is used. `--max-dependencies` caps the work (0 means all outdated dependencies).
 3. **Clone:** accepts a local folder or a GitHub URL and copies it into a workspace. A URL is cloned once and reused for every selected dependency.
 4. **API diff:** installs the current and target versions of the dependency into separate temporary folders with `pip install --target`, then compares their public names using `ast`. Each candidate name is also checked at runtime in both versions in a separate subprocess. This catches names removed through package internals, such as `numpy.float_`.
 5. **Usage scan:** finds every use of a changed name in the repository, with file and line.
@@ -107,6 +107,7 @@ Fallback stays within one provider. On 404 or 429, AutoMigrate tries the next mo
 | `--docs DIR` | Folder of migration docs to index. |
 | `--max-iterations N` | Repair iterations, default 5. |
 | `--max-dependencies N` | Maximum outdated dependencies to attempt. `0` (the default) means all. |
+| `--target NAME==VERSION` | Override the PyPI lookup for one dependency on this run only. |
 | `--out DIR` | Output folder, default `D:\AutoMigrateOutputs` on Windows. |
 
 | Environment variable | Purpose |

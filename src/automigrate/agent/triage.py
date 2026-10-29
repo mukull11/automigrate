@@ -49,18 +49,26 @@ def _candidate_block(candidates: Sequence[DependencyCandidate]) -> str:
     lines: list[str] = []
     for candidate in candidates:
         symbols = ", ".join(candidate.sample_symbols) or "none"
+        breaking = candidate.breaking_count()
+        breaking_text = (
+            "not checked"
+            if breaking is None
+            else ("confirmed" if breaking > 0 else "none")
+        )
         lines.append(
             "- dependency: {name}\n"
             "  current: {current}\n"
             "  latest: {latest}\n"
             "  declared_in: {source}\n"
             "  usage_count: {count}\n"
+            "  breaking_usage: {breaking}\n"
             "  sample_symbols: {symbols}".format(
                 name=candidate.name,
                 current=candidate.current_version or "unknown",
                 latest=candidate.latest_version or "unknown",
                 source=candidate.source_file,
                 count=candidate.usage_count,
+                breaking=breaking_text,
                 symbols=symbols,
             )
         )
@@ -80,10 +88,12 @@ def build_triage_prompt(
         )
     return (
         "Choose the order in which outdated dependencies should be migrated now.\n"
-        "Triage is prioritization, not veto: dependencies with usage_count greater "
-        "than zero must be migrated.\n"
-        "You may skip only dependencies with usage_count equal to zero, and every "
-        "skip must include a reason.\n"
+        "Triage is prioritization, not veto: dependencies with a confirmed "
+        "breaking usage (a removed, renamed, or changed-parameter name that the "
+        "repository actually uses) must be migrated.\n"
+        "A dependency marked as having no breaking usage must not be migrated.\n"
+        "You may skip any dependency that has no confirmed breaking usage, and "
+        "every skip must include a reason.\n"
         "Use only names and versions from the candidate list.\n"
         "Return JSON with this exact shape:\n"
         '{"migrations": [{"dependency": "name", "from_version": "1.0.0", '
@@ -93,6 +103,26 @@ def build_triage_prompt(
         "If you recommend no migrations, return an empty migrations list.\n"
         f"{retry}\nCandidates:\n{_candidate_block(candidates)}\n"
     )
+
+
+def _should_auto_select(candidate: DependencyCandidate) -> bool:
+    """Auto-select only claims the repository can prove are affected.
+
+    Candidates from older callers that predate the breaking-usage check keep
+    the previous usage-count behaviour.
+    """
+
+    breaking = candidate.breaking_count()
+    if breaking is not None:
+        return breaking > 0
+    return candidate.usage_count > 0
+
+
+def _skip_reason(candidate: DependencyCandidate) -> str:
+    breaking = candidate.breaking_count()
+    if breaking == 0:
+        return "outdated, no breaking usage found"
+    return "zero usages; not selected by triage"
 
 
 def _same_version(left: str | None, right: str | None) -> bool:
@@ -132,7 +162,7 @@ def _parse_skips(
         candidate = by_name.get(key)
         if candidate is None:
             raise TriageValidationError(f"unknown dependency: {dependency}")
-        if candidate.usage_count > 0:
+        if candidate.usage_count > 0 and candidate.is_migratable():
             raise TriageValidationError(
                 f"cannot skip dependency with confirmed usages: {candidate.name}"
             )
@@ -177,6 +207,10 @@ def _validate(
             raise TriageValidationError(
                 f"dependency is not outdated: {candidate.name}"
             )
+        if not candidate.is_migratable():
+            raise TriageValidationError(
+                f"outdated, no breaking usage found: {candidate.name}"
+            )
         if not _same_version(str(from_version), candidate.current_version):
             raise TriageValidationError(
                 f"wrong from_version for {candidate.name}: {from_version}"
@@ -220,7 +254,7 @@ def _finalize_selection(
         (
             candidate
             for candidate in candidates
-            if candidate.usage_count > 0
+            if _should_auto_select(candidate)
             and normalize_name(candidate.name) not in selected_names
         ),
         key=lambda candidate: (-candidate.usage_count, normalize_name(candidate.name)),
@@ -242,12 +276,14 @@ def _finalize_selection(
     skipped_names = {normalize_name(item.dependency) for item in skipped}
     for candidate in sorted(candidates, key=lambda item: normalize_name(item.name)):
         key = normalize_name(candidate.name)
-        if candidate.usage_count > 0 or key in selected_names or key in skipped_names:
+        if key in selected_names or key in skipped_names:
+            continue
+        if candidate.is_migratable() and candidate.usage_count > 0:
             continue
         skipped.append(
             TriageSkip(
                 dependency=candidate.name,
-                reason="zero usages; not selected by triage",
+                reason=_skip_reason(candidate),
             )
         )
         skipped_names.add(key)
@@ -271,8 +307,14 @@ def deterministic_triage(
         (candidate for candidate in candidates if candidate.status == "outdated"),
         key=lambda candidate: (-candidate.usage_count, normalize_name(candidate.name)),
     )
+    migratable = [candidate for candidate in ordered if candidate.is_migratable()]
+    skipped = [
+        TriageSkip(dependency=candidate.name, reason=_skip_reason(candidate))
+        for candidate in ordered
+        if not candidate.is_migratable()
+    ]
     if max_dependencies > 0:
-        ordered = ordered[:max_dependencies]
+        migratable = migratable[:max_dependencies]
     migrations = [
         TriageDecision(
             dependency=candidate.name,
@@ -280,10 +322,11 @@ def deterministic_triage(
             to_version=candidate.latest_version or "",
             reason=f"deterministic fallback: {reason}",
         )
-        for candidate in ordered
+        for candidate in migratable
     ]
     return TriageResult(
         migrations=migrations,
+        skipped=skipped,
         summary=(
             f"{reason}. Deterministic fallback selected {len(migrations)} "
             "outdated dependency(ies) by usage count."

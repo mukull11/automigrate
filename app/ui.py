@@ -26,7 +26,7 @@ from automigrate.activity import (
 from automigrate.activity import (
     new_activity as _new_activity,
 )
-from automigrate.apidiff.detector import ApiDiffError
+from automigrate.apidiff.detector import ApiDiffError, PipApiDiffDetector
 from automigrate.auto import AutoMigrationResult, run_auto_migration
 from automigrate.graph import MigrationResult
 from automigrate.ingest.dependencies import normalize_name
@@ -386,6 +386,7 @@ def main() -> None:
                     allow_undocumented=allow_undocumented,
                     max_dependencies=int(max_dependencies),
                     progress_callback=progress,
+                    api_detector=PipApiDiffDetector(),
                 )
         except ApiDiffError as exc:
             _fail_activity(activity, f"API diff failed: {exc}")

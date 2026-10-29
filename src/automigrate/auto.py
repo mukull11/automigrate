@@ -8,11 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from automigrate.agent.triage import TriageDecision, TriageResult, triage_candidates
+from automigrate.apidiff.runtime import add_removed_names
+from automigrate.apidiff.usages import scan_api_usages
 from automigrate.config import default_outputs_dir, ensure_outputs_dir
 from automigrate.graph import MigrationResult, ProgressCallback, run_migration
 from automigrate.ingest.versions import (
     DependencyCandidate,
     Fetcher,
+    apply_target_override,
     build_candidates,
     outdated_candidates,
 )
@@ -25,6 +28,7 @@ from automigrate.tools.git import (
 )
 
 NO_CHANGES = "NO_CHANGES"
+UP_TO_DATE = "UP_TO_DATE_FOR_CODE"
 SUCCESSFUL = "SUCCESSFUL"
 PARTIAL = "PARTIAL"
 FAILED = "FAILED"
@@ -72,7 +76,7 @@ class AutoMigrationResult:
 
     @property
     def succeeded(self) -> bool:
-        return self.status in {NO_CHANGES, SUCCESSFUL}
+        return self.status in {NO_CHANGES, UP_TO_DATE, SUCCESSFUL}
 
 
 def _aggregate(runs: list[DependencyRun]) -> str:
@@ -93,6 +97,59 @@ def _summary(runs: list[DependencyRun]) -> str:
     if failed:
         text += " Not successful: " + ", ".join(failed) + "."
     return text
+
+
+def _with_skipped_releases(
+    text: str,
+    candidates: list[DependencyCandidate],
+) -> str:
+    messages = [
+        message
+        for candidate in candidates
+        for message in candidate.skipped_releases
+    ]
+    if not messages:
+        return text
+    return text + " Skipped newer releases: " + "; ".join(messages)
+
+
+def _annotate_breaking_usage(
+    source: Path,
+    candidates: list[DependencyCandidate],
+    detector,
+    progress: ProgressCallback | None,
+) -> None:
+    """Record whether each outdated candidate has a confirmed breaking usage."""
+
+    for candidate in candidates:
+        if candidate.status != "outdated" or candidate.breaking_known():
+            continue
+        if not candidate.current_version or not candidate.latest_version:
+            continue
+        if progress is not None:
+            progress(
+                "DETECT",
+                f"[{candidate.name}] checking {candidate.current_version} -> "
+                f"{candidate.latest_version} for breaking usages",
+            )
+        bundle = detector.detect(
+            candidate.name,
+            candidate.current_version,
+            candidate.latest_version,
+            source,
+        )
+        diff = add_removed_names(
+            bundle.diff, list(getattr(bundle, "removed_names", []))
+        )
+        usages = scan_api_usages(source, diff)
+        candidate.breaking_usage_count = len(usages)
+        candidate.breaking_usages = usages
+        candidate.breaking_symbols = sorted({usage.symbol for usage in usages})
+        if progress is not None:
+            progress(
+                "DETECT",
+                f"[{candidate.name}] confirmed breaking usages: {len(usages)}",
+            )
 
 
 def _prefixed_progress(
@@ -138,6 +195,7 @@ def run_auto_migration(
     api_key: str | None = None,
     max_iterations: int = 5,
     max_dependencies: int = 0,
+    target: str | None = None,
     allow_undocumented: bool | None = None,
     outputs_dir: str | Path | None = None,
     db_path: str | Path | None = None,
@@ -167,6 +225,8 @@ def run_auto_migration(
         if progress_callback is not None:
             progress_callback("INGEST", "resolving dependency versions from PyPI")
         candidates = build_candidates(source, fetcher=pypi_fetcher)
+        if target is not None:
+            candidates = apply_target_override(candidates, target)
         outdated = outdated_candidates(candidates)
         result = AutoMigrationResult(
             repo_input=repository,
@@ -176,8 +236,15 @@ def run_auto_migration(
         )
         if not outdated:
             result.status = NO_CHANGES
-            result.summary = "No outdated dependencies were detected."
+            result.summary = _with_skipped_releases(
+                "No outdated dependencies were detected.", candidates
+            )
             return result
+
+        if api_detector is not None:
+            _annotate_breaking_usage(
+                source, outdated, api_detector, progress_callback
+            )
 
         if progress_callback is not None:
             progress_callback(
@@ -198,6 +265,15 @@ def run_auto_migration(
             max_dependencies=max_dependencies,
         )
         result.triage = triage
+
+        if not triage.migrations:
+            result.status = UP_TO_DATE
+            result.summary = _with_skipped_releases(
+                "Up to date for this code: outdated dependencies were found, "
+                "but no breaking usage was found.",
+                candidates,
+            )
+            return result
 
         for decision in triage.migrations:
             run_progress = _prefixed_progress(progress_callback, decision.dependency)
@@ -243,7 +319,9 @@ def run_auto_migration(
             )
 
         result.status = _aggregate(result.runs)
-        result.summary = _summary(result.runs)
+        result.summary = _with_skipped_releases(
+            _summary(result.runs), candidates
+        )
         return result
     finally:
         if clone_root is not None:

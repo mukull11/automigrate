@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from automigrate import __version__, db
-from automigrate.apidiff.detector import ApiDiffError
+from automigrate.apidiff.detector import ApiDiffError, PipApiDiffDetector
 from automigrate.auto import AutoMigrationResult, run_auto_migration
 from automigrate.config import Settings, get_settings
 from automigrate.ingest.dependencies import normalize_name
@@ -122,6 +122,11 @@ def migrate(
         min=0,
         help="Maximum outdated dependencies to attempt (0 = all).",
     ),
+    target: str | None = typer.Option(
+        None,
+        "--target",
+        help="Override the PyPI lookup for this run, as NAME==VERSION.",
+    ),
     allow_undocumented: bool | None = typer.Option(
         None,
         "--allow-undocumented/--no-allow-undocumented",
@@ -185,12 +190,16 @@ def migrate(
             api_key=resolved_key,
             max_iterations=settings.max_iterations,
             max_dependencies=settings.max_dependencies,
+            target=target,
             allow_undocumented=settings.allow_undocumented,
             outputs_dir=settings.outputs_dir,
             db_path=settings.db_path,
             top_k=settings.top_k,
             score_threshold=settings.score_threshold,
             subprocess_timeout=settings.subprocess_timeout,
+            api_detector=PipApiDiffDetector(
+                timeout=max(settings.subprocess_timeout, 300)
+            ),
         )
     except (LLMConfigurationError, ApiDiffError, GitError, FileNotFoundError) as exc:
         typer.echo(f"migration failed to start: {exc}", err=True)
@@ -215,6 +224,8 @@ def _print_auto_result(result: AutoMigrationResult) -> None:
             f"(usages={candidate.usage_count}, {candidate.status}, "
             f"{candidate.source_file})"
         )
+        for skipped_release in candidate.skipped_releases:
+            typer.echo(f"    {skipped_release}")
 
     if result.triage is not None:
         typer.echo()
